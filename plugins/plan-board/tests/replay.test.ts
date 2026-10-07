@@ -18,6 +18,16 @@ test('adds_items_in_order_with_before', async () => {
 })
 
 test('steps_add_move_status_and_evidence', async () => {
+  const before = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' } }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+      entry('step.add', { item: 'A', step: { id: 's3', title: 'three' }, after: 's1' }),
+    ]),
+  )
+  expect(before.items.A.steps).toEqual(['s1', 's3', 's2'])
+
   const plan = await replay(
     await logText([
       entry('item.add', { item: item('A') }),
