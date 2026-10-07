@@ -72,11 +72,27 @@ function clonePlan(plan: Plan): Plan {
   return copy
 }
 
+/** A position the entry names (item.add before, step.add / step.move after) must exist, and an after must sit in the target item. */
+function positionProblem(plan: Plan, e: Entry): string | null {
+  const d: unknown = e.data
+  if (!isObj(d)) return null
+  if (e.kind === 'item.add' && d.before !== undefined && (typeof d.before !== 'string' || !has(plan.items, d.before))) {
+    return `unknown item: ${String(d.before)} (before)`
+  }
+  if ((e.kind === 'step.add' || e.kind === 'step.move') && d.after !== undefined) {
+    const after = d.after
+    if (typeof after !== 'string' || !has(plan.steps, after)) return `unknown step: ${String(after)} (after)`
+    if (plan.steps[after].item !== d.item) return `step ${after} (after) is not in item ${String(d.item)}`
+    if (e.kind === 'step.move' && after === d.step) return `step ${after} cannot be placed after itself (after)`
+  }
+  return null
+}
+
 /** Runs the entries in order on a copy of the plan; returns the first skip reason, or null when all apply. */
 function firstProblem(plan: Plan, entries: Entry[]): string | null {
   const copy = clonePlan(plan)
   for (const e of entries) {
-    const reason = applyEntry(copy, e)
+    const reason = positionProblem(copy, e) ?? applyEntry(copy, e)
     if (reason !== null) return reason
   }
   return null
@@ -86,11 +102,12 @@ function make(ctx: ToolContext, kind: Change['kind'], data: unknown, why: string
   return { id: ctx.newId(12), at: ctx.now, kind, why, basis, data } as Entry
 }
 
-/** Validates the entries against the plan; they are what gets written. */
+/** Validates the entries against the plan; they are what gets written, the i-th one i ms after ctx.now so replay keeps their order. */
 function accept(ctx: ToolContext, entries: Entry[], message: string, drop: string[] = []): ToolResult {
-  const reason = firstProblem(ctx.plan, entries)
+  const stamped = entries.map((e, i) => ({ ...e, at: new Date(Date.parse(ctx.now) + i).toISOString() }) as Entry)
+  const reason = firstProblem(ctx.plan, stamped)
   if (reason !== null) return { ok: false, error: reason }
-  return { ok: true, entries, drop, message }
+  return { ok: true, entries: stamped, drop, message }
 }
 
 function checkRefs(plan: Plan, itemId: string | undefined, stepId: string | undefined): string | undefined {
@@ -145,7 +162,7 @@ const proposeChange = guard((ctx, input) => {
   const reason = firstProblem(ctx.plan, [...checks, open])
   if (reason !== null) return { ok: false, error: reason }
   const news = created.length > 0 ? ` New item ids: ${created.join(', ')}.` : ''
-  return { ok: true, entries: [open], drop: [], message: `Proposed card ${card.id}; wait for the user's answer.${news}` }
+  return accept(ctx, [open], `Proposed card ${card.id}; wait for the user's answer.${news}`)
 })
 
 // ---- apply_change ----
@@ -158,12 +175,16 @@ const applyChange = guard((ctx, input) => {
   const card = ctx.plan.cards[cardId]
   if (card.type !== 'proposal') return fail(`card ${cardId} is a question, not a proposal; close it with resolve_decision`)
   if (card.resolved !== undefined) return fail(`card ${cardId} is already resolved`)
+  const changes = Array.isArray(card.changes) ? card.changes : []
+  if (changes.length === 0) return fail(`card ${cardId} holds no changes to apply; close it with resolve_decision`)
+  if (changes.some((c) => !isObj(c) || typeof c.kind !== 'string' || !c.kind.startsWith('item.'))) {
+    return fail(`card ${cardId} holds changes other than item.*; close it with resolve_decision`)
+  }
   const hasChat = chat !== undefined && chat.trim() !== ''
   if (!hasChat && !ctx.isApproved(cardId)) {
     return fail(`card ${cardId} is not approved: the user has not sent "approve" for it in the pane; ask them, or pass their words as chat`)
   }
   const basis: Basis = hasChat ? { type: 'card', card: cardId, chat } : { type: 'card', card: cardId }
-  const changes = Array.isArray(card.changes) ? card.changes : []
   const entries: Entry[] = []
   for (const change of changes) {
     if (!isObj(change) || typeof change.kind !== 'string') return fail(`card ${cardId} changed since it was proposed: it holds a malformed change`)
@@ -189,10 +210,8 @@ const updateStep = guard((ctx, input) => {
   let result: string | undefined
   if (o.evidence !== undefined) {
     if (!isObj(o.evidence)) return fail('evidence must be an object with thoth or result')
-    thoth = optText(o.evidence, 'thoth')
-    result = optText(o.evidence, 'result')
-    if (thoth === '') thoth = undefined
-    if (result === '') result = undefined
+    thoth = optText(o.evidence, 'thoth')?.trim() || undefined
+    result = optText(o.evidence, 'result')?.trim() || undefined
   }
   const basis: Basis = thoth !== undefined ? { type: 'thoth', task: thoth } : ai
   const entries: Entry[] = []

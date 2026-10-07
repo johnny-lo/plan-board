@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { sha16 } from '../hooks/checksum.ts'
+import { nextText } from '../hooks/logfile.ts'
 import { replay } from '../hooks/replay.ts'
 import { TOOLS } from '../hooks/tools.ts'
 import type { ToolContext, ToolResult } from '../hooks/tools.ts'
@@ -124,11 +125,11 @@ test('apply_change_needs_approval_or_chat', async () => {
   expect(approved.entries.map((e) => e.kind)).toEqual(['item.add', 'item.edit', 'card.resolve'])
   expect(approved.entries.map((e) => e.id).every((id) => id.length === 12)).toBe(true)
   expect(new Set(approved.entries.map((e) => e.id)).size).toBe(3)
-  for (const e of approved.entries) {
+  approved.entries.forEach((e, i) => {
     expect(e.basis).toEqual({ type: 'card', card: 'p1' })
     expect(e.why).toBe('why-p1')
-    expect(e.at).toBe(NOW)
-  }
+    expect(e.at).toBe(new Date(Date.parse(NOW) + i).toISOString())
+  })
   expect(approved.entries[2].data).toEqual({ card: 'p1', outcome: 'approved', choice: 'approve' })
   expect(approved.entries[0].data).toEqual(changes[0].data)
   expect(approved.message).toContain('p1')
@@ -307,4 +308,69 @@ test('schemas_list_required_fields', () => {
     expect((tool.inputSchema as { type: string }).type).toBe('object')
   }
   expect(Object.keys(TOOLS).sort()).toEqual(['add_decision', 'apply_change', 'propose_change', 'resolve_decision', 'resolve_direct_edit', 'update_step'])
+})
+
+test('entries_of_one_call_replay_in_written_order', async () => {
+  const base = [entry('item.add', { item: item('A') }), entry('item.add', { item: item('B') })]
+  for (let run = 0; run < 20; run++) {
+    const plan = await planOf(base)
+    const ctx: ToolContext = {
+      plan,
+      now: NOW,
+      newId: (length) => crypto.randomUUID().replace(/-/g, '').slice(0, length),
+      isApproved: () => true,
+    }
+    const changes = [
+      { kind: 'item.add', data: { item: item('C') } },
+      { kind: 'item.reorder', data: { order: ['C', 'A', 'B'] } },
+    ]
+    const opened = good(TOOLS.propose_change.run(ctx, { question: 'q', why: 'w', changes }))
+    const cardId = (opened.entries[0].data as { card: { id: string } }).card.id
+    const withCard = await nextText(await logText(base), opened.entries, [])
+    const applied = good(TOOLS.apply_change.run({ ...ctx, plan: await replay(withCard) }, { card: cardId }))
+    expect(applied.entries.map((e) => e.at)).toEqual(applied.entries.map((_, i) => new Date(Date.parse(NOW) + i).toISOString()))
+    const after = await replay(await nextText(withCard, applied.entries, []))
+    expect(after.order).toEqual(['C', 'A', 'B'])
+    expect(after.skipped).toEqual([])
+  }
+})
+
+test('positions_must_exist', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), entry('item.add', { item: item('B') }), step('A', 's1'), step('B', 's2')])
+  const add = (before: string) => [{ kind: 'item.add', data: { item: item('X'), before } }]
+  expect(bad(TOOLS.propose_change.run(ctxOf(plan), { question: 'q', why: 'w', changes: add('ghost') }))).toContain('before')
+  good(TOOLS.propose_change.run(ctxOf(plan), { question: 'q', why: 'w', changes: add('B') }))
+
+  const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [op] })
+  expect(bad(run({ action: 'add', item: 'A', title: 't', after: 'ghost' }))).toContain('after')
+  expect(bad(run({ action: 'add', item: 'A', title: 't', after: 's2' }))).toContain('after')
+  good(run({ action: 'add', item: 'A', title: 't', after: 's1' }))
+  expect(bad(run({ action: 'move', step: 's1', item: 'B', after: 'ghost' }))).toContain('after')
+  expect(bad(run({ action: 'move', step: 's1', item: 'B', after: 'ghost' }))).toContain('ghost')
+  expect(bad(run({ action: 'move', step: 's1', item: 'B', after: 's1' }))).toContain('after')
+  good(run({ action: 'move', step: 's1', item: 'B', after: 's2' }))
+})
+
+test('apply_change_refuses_empty_or_non_item_cards', async () => {
+  const plan = await planOf([
+    entry('item.add', { item: item('A') }),
+    entry('card.open', { card: { id: 'p0', type: 'proposal', question: 'q', why: 'w', options: [], changes: [] } }),
+    entry('card.open', {
+      card: { id: 'p1', type: 'proposal', question: 'q', why: 'w', options: [], changes: [{ kind: 'step.add', data: { item: 'A', step: { id: 's1', title: 't' } } }] },
+    }),
+  ])
+  expect(bad(TOOLS.apply_change.run(ctxOf(plan, ['p0']), { card: 'p0' }))).toContain('changes')
+  expect(bad(TOOLS.apply_change.run(ctxOf(plan, ['p1']), { card: 'p1' }))).toContain('item.')
+})
+
+test('blank_evidence_counts_as_missing', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')])
+  const done = { action: 'status', step: 's1', status: 'done' }
+  const run = (evidence: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [done], evidence })
+  expect(bad(run({ thoth: '   ' }))).toContain('evidence')
+  expect(bad(run({ result: ' 	' }))).toContain('evidence')
+  expect(bad(run({ thoth: ' ', result: '' }))).toContain('evidence')
+  const kept = good(run({ thoth: '  ', result: ' fine ' }))
+  expect(kept.entries[0].basis).toEqual({ type: 'ai' })
+  expect(kept.entries[0].data).toEqual({ step: 's1', status: 'done', result: 'fine' })
 })
