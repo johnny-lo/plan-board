@@ -152,6 +152,17 @@
 
   這樣兩個分支或兩台電腦各自加的紀錄，merge 和 rebase 時 git 會直接合在一起，不會衝突。
 
+### 5.1a 沒有 `plan/` 的 repo：存在本機（2026-10-08 加）
+
+使用者選的：只有已經有 `plan/log.jsonl` 的 repo 才把紀錄寫進 repo；其他 repo 存在這台電腦。原因：照原本的設計，AI 在任何 repo 開一張卡，那個 repo 就會多出 `plan/` 並被改 `.gitattributes`，包括別人的 repo（例如 LPC3.0）。
+
+- **兩種模式**：`<根目錄>/plan/log.jsonl` 存在 = **repo 模式**（照 5.1）；不存在 = **本機模式**。每次讀計畫時判斷，不另存設定。
+- **本機模式**：紀錄的文字（格式和 `log.jsonl` 一模一樣，一行一筆、有檢查碼）存在 `$.store` 的 `log:<根目錄>` 底下。讀、寫、重試、檢查碼、重算都沿用同一套程式，只是讀寫的地方不同。本機模式不碰 `.gitattributes`，也不會被別的工具直接改到，所以不會有「被直接改過」的行。
+- **工具在兩種模式下都能用**（卡片、項目、步驟都可以）。本機模式的紀錄不跟 git 走，只在這台電腦。
+- **只有使用者能把 repo 改成 repo 模式**：在那個 repo 打 `/plan init`。它會建立 `plan/log.jsonl`、把本機已有的紀錄原封不動搬進去（之後清掉本機那份）、確認 `.gitattributes` 有 5.1 那一行。工具和 AI 都不會自己建立 `plan/`；AI 覺得這個 repo 適合放計畫時，用 `add_decision` 問使用者要不要打 `/plan init`。
+- `/plan init` 遇到 `plan/log.jsonl` 已經存在時，什麼都不改，只說已經是 repo 模式。
+- 給 AI 的摘要第一行寫明目前是哪個模式（`Plan storage: repo (plan/log.jsonl)` 或 `Plan storage: this machine only (run /plan init to keep it in the repo)`）。窗格的總表最上方用一行小字標出本機模式。
+
 ### 5.2 一筆紀錄
 
 ```json
