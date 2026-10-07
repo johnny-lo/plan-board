@@ -28,5 +28,5 @@ export async function checkLine(raw: string): Promise<{ entry: Entry | null; isS
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { entry: null, isSealed: false, hash }
   const { sum, ...rest } = parsed as Record<string, unknown>
   const entry = rest as unknown as Entry
-  return { entry, isSealed: typeof sum === 'string' && sum === (await sumOf(rest as never)), hash }
+  return { entry, isSealed: typeof sum === 'string' && sum === (await sha16(JSON.stringify(rest))), hash }
 }
