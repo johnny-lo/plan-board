@@ -48,7 +48,8 @@
 ### Task 1: 專案骨架、型別、檢查碼
 
 **Files:**
-- Create: `.claude-plugin/marketplace.json`、`plugins/plan-board/.claude-plugin/plugin.json`、`plugins/plan-board/hooks/hooks.json`、`plugins/plan-board/tsconfig.json`、`plugins/plan-board/types/index.d.ts`、`plugins/plan-board/hooks/checksum.ts`、`plugins/plan-board/hooks/register.tsx`、`.gitignore`、`LICENSE-MIT`、`LICENSE-APACHE`
+- Create: `.claude-plugin/marketplace.json`、`plugins/plan-board/.claude-plugin/plugin.json`、`plugins/plan-board/hooks/hooks.json`、`plugins/plan-board/tsconfig.json`、`plugins/plan-board/types/index.d.ts`、`plugins/plan-board/hooks/checksum.ts`、`plugins/plan-board/hooks/register.tsx`、`LICENSE-MIT`、`LICENSE-APACHE`
+- Modify: `.gitignore`
 - Test: `plugins/plan-board/tests/checksum.test.ts`
 
 **Interfaces:**
@@ -123,7 +124,7 @@ export type Local = { staged: Record<string, Pick>; sent: Record<string, Pick>; 
 - `marketplace.json`：`name: "plan-board"`、`owner.name: "plan-board contributors"`，`plugins` 裡放一筆 `source: "./plugins/plan-board"`。
 - `register.tsx`：先放一個什麼都不做的 `register`。
 - 兩份授權檔：從 Thoth 根目錄複製，著作權人改成 `plan-board contributors`。
-- `.gitignore`：只寫一行 `plugins/plan-board/.claude-plugin/types/`。
+- `.gitignore`：已經有一行 `.agent/`（Thoth 用的，保留），再加一行 `plugins/plan-board/.claude-plugin/types/`。
 
 - [ ] **Step 2: 寫會失敗的測試** `tests/checksum.test.ts`
 
