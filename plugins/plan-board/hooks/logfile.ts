@@ -64,8 +64,11 @@ async function seen($: Files, path: string): Promise<Seen> {
 
 const same = (a: Seen, b: Seen): boolean => (a === null || b === null ? a === b : a.size === b.size && a.mtimeMs === b.mtimeMs)
 
-/** Writes the entries (and removes the dropped lines) unless another session changed the file meanwhile; at most 3 tries. */
-export async function commitEntries($: Files, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy'> {
+/**
+ * Writes the entries (and removes the dropped lines) unless another session changed the file meanwhile; at most 3 tries.
+ * `'no-attributes'`: the entries are written, but .gitattributes could not be brought up to date.
+ */
+export async function commitEntries($: Files, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'no-attributes'> {
   const path = logPath(root)
   for (let attempt = 0; attempt < TRIES; attempt++) {
     const before = await seen($, path)
@@ -73,7 +76,12 @@ export async function commitEntries($: Files, root: string, entries: Entry[], dr
     const next = await nextText(text, entries, drop)
     if (!same(before, await seen($, path))) continue
     await $.fs.write(path, next)
-    await ensureAttributes($, root)
+    // The log is written: from here the entries count as committed, whatever happens to .gitattributes.
+    try {
+      await ensureAttributes($, root)
+    } catch {
+      return 'no-attributes'
+    }
     return 'ok'
   }
   return 'busy'

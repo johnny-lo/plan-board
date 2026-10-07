@@ -159,3 +159,17 @@ test('calls_in_the_same_millisecond_replay_in_call_order', async ($, on) => {
   expect(new Set(ats).size).toBe(ats.length)
   expect(ats).toEqual([...ats].sort())
 })
+
+test('a_failed_gitattributes_write_does_not_undo_the_entries', async ($, on) => {
+  const w = world(on)
+  w.failWrites = '.gitattributes'
+  await $.session.start({ cwd: '/repo' })
+  const res = await propose($)
+  expect(res.deny).toBeUndefined()
+  expect(String(res.result)).toContain('Proposed card')
+  expect(String(res.result)).toContain('.gitattributes')
+  expect(w.files[LOG].split('\n').filter(Boolean).length).toBe(1)
+  expect(ATTRIBUTES in w.files).toBe(false)
+  // The entries were committed: the plugin already knows the card.
+  expect(await summaryOf($)).toContain('Add docs?')
+})

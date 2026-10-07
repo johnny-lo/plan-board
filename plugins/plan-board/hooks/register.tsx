@@ -2,15 +2,33 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { GUIDE, summary } from './guide.ts'
+import { langOf, t } from './i18n.ts'
 import { commitEntries, readLog, rootOf } from './logfile.ts'
 import type { Files } from './logfile.ts'
-import { asLocal, emptyLocal, forget, isApproved, localKey } from './local.ts'
+import {
+  asLocal,
+  batchMessage,
+  blockingMessage,
+  cleared,
+  emptyLocal,
+  forget,
+  isApproved,
+  localKey,
+  markSent,
+  withChoice,
+  withDismiss,
+  withDraft,
+} from './local.ts'
+import { bandView, isBandEmpty, paneView } from './pane.tsx'
 import { emptyPlan, replay } from './replay.ts'
 import { TOOLS } from './tools.ts'
 import type { ToolName } from './tools.ts'
-import type { Plan } from '../types'
+import type { Card, Local, Plan } from '../types'
 
 const PANE = 'plan-board'
+const TITLE = 'Plan board'
+/** Staged choices go out on their own after this long without a pick. */
+const AUTO_SEND_MS = 60_000
 const root = atom({ plugin: 'plan-board', key: 'root' } as const, '')
 const plan = atom({ plugin: 'plan-board', key: 'plan' } as const, emptyPlan())
 const local = atom({ plugin: 'plan-board', key: 'local' } as const, emptyLocal())
@@ -18,6 +36,8 @@ const local = atom({ plugin: 'plan-board', key: 'local' } as const, emptyLocal()
 const DENY_EDIT =
   'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, resolve_decision, resolve_direct_edit.'
 const DENY_BUSY = 'The plan file is being written by another session; try again.'
+const NOTE_ATTRIBUTES =
+  ' Note: .gitattributes could not be updated, so plan/log.jsonl may conflict when branches merge; add the line "plan/log.jsonl merge=union" to .gitattributes.'
 
 /** The full tool names $.tool.register gave this load's tools. */
 const names = new Map<string, ToolName>()
@@ -87,7 +107,80 @@ async function isUnderPlan($: EngineInterface, path: unknown): Promise<boolean> 
   return /^[a-z]:/i.test(dir) ? target.toLowerCase().startsWith(dir.toLowerCase()) : target.startsWith(dir)
 }
 
-export const register: Register = on => {
+// Per load: a reload cancels pending timers and starts these over.
+let timer: { cancel: () => void } | undefined
+let isBusy = false
+let isSendWhenIdle = false
+
+function cancelTimer(): void {
+  timer?.cancel()
+  timer = undefined
+}
+
+/** Keeps this machine's pane state in the store and on screen. */
+async function save($: EngineInterface, next: Local): Promise<void> {
+  await $.store.set(localKey(await rootNow($)), next)
+  await update($, local, () => next)
+}
+
+// Sends every staged card as one message.
+async function sendStaged($: EngineInterface): Promise<number> {
+  cancelTimer()
+  isSendWhenIdle = false
+  const current = await read($, local)
+  const ids = Object.keys(current.staged)
+  if (ids.length === 0) return 0
+  const { local: after, sent } = markSent(current, ids, await $.clock.now())
+  await save($, after)
+  void $.prompt.submit({ text: batchMessage(await read($, plan), sent) }).catch(() => {})
+  return sent.length
+}
+
+/** Restarts the quiet-time countdown; with nothing staged, stops it. */
+function reschedule($: EngineInterface, current: Local): void {
+  cancelTimer()
+  if (Object.keys(current.staged).length === 0) return
+  timer = $.clock.after(AUTO_SEND_MS, () => {
+    timer = undefined
+    // Claude is working: send when the turn ends instead of queueing behind it now.
+    if (isBusy) {
+      isSendWhenIdle = true
+      return
+    }
+    void sendStaged($).catch(() => {})
+  })
+}
+
+async function stage($: EngineInterface, make: (current: Local, at: number) => Local): Promise<void> {
+  const at = await $.clock.now()
+  const next = make(await read($, local), at)
+  await save($, next)
+  reschedule($, next)
+}
+
+async function sendNow($: EngineInterface, card: Card, make: (current: Local, at: number) => Local): Promise<void> {
+  const at = await $.clock.now()
+  const { local: after, sent } = markSent(make(await read($, local), at), [card.id], at)
+  // An empty thought leaves nothing to send.
+  if (sent.length === 0) return
+  await save($, after)
+  reschedule($, after)
+  await $.prompt.submit({ text: blockingMessage(card, sent[0][1]) })
+}
+
+// A blocking card is answered at once; any other pick is staged for the batch.
+const act = ($: EngineInterface, card: Card, make: (current: Local, at: number) => Local): Promise<void> =>
+  card.blocking === true ? sendNow($, card, make) : stage($, make)
+
+async function toggle($: EngineInterface, id: string): Promise<void> {
+  const current = await read($, local)
+  const expanded = current.expanded.includes(id) ? current.expanded.filter(known => known !== id) : [...current.expanded, id]
+  await save($, { ...current, expanded })
+}
+
+export const register: Register = (on, options) => {
+  const lang = langOf(options.language)
+
   on('session.start', async ($, e, next) => {
     const top = await rootOf(filesOf($))
     await update($, root, () => top)
@@ -97,7 +190,9 @@ export const register: Register = on => {
       const registered = await $.tool.register({ name, description: tool.description, inputSchema: tool.inputSchema as Record<string, unknown> })
       names.set(registered.tool, name)
     }
-    await $.command.register({ name: 'plan', description: 'Open the plan board pane' })
+    await $.command.register({ name: 'plan', description: t(lang, 'commandDescription') })
+    // Choices staged before a reload still go out on their own.
+    reschedule($, await read($, local))
     return next(e)
   })
 
@@ -112,7 +207,7 @@ export const register: Register = on => {
         input,
       )
       if (!ran.ok) return { deny: ran.error }
-      let outcome: 'ok' | 'busy'
+      let outcome: Awaited<ReturnType<typeof commitEntries>>
       try {
         outcome = await commitEntries(filesOf($), await rootNow($), ran.entries, ran.drop)
       } catch (err) {
@@ -120,7 +215,8 @@ export const register: Register = on => {
       }
       if (outcome === 'busy') return { deny: DENY_BUSY }
       await refresh($)
-      return { result: ran.message }
+      // The entries are in the log either way; only the merge setting is missing.
+      return { result: outcome === 'no-attributes' ? ran.message + NOTE_ATTRIBUTES : ran.message }
     }
     if (tool === 'Edit' || tool === 'Write') {
       if (await isUnderPlan($, input.file_path)) return { deny: DENY_EDIT }
@@ -142,9 +238,45 @@ export const register: Register = on => {
     return { sections: [...composed.sections, { id: 'plan-board:guide', text, scope: 'session' as const }] }
   })
 
+  // The main turn decides when staged choices may go out; a subagent's turn does not.
+  on('turn.start', async ($, e, next) => {
+    isBusy = true
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const done = await next(e)
+    // A subagent's turn ending says nothing about the main loop.
+    if (e.agentId === undefined) {
+      isBusy = false
+      if (isSendWhenIdle) void sendStaged($).catch(() => {})
+    }
+    return done
+  })
+
   on('command.run', { command: 'plan' }, async $ => {
     await refresh($)
-    await $.ui.open({ id: PANE, title: 'Plan board' })
-    return { text: 'Plan board opened.' }
+    await $.ui.open({ id: PANE, title: TITLE })
+    return { text: t(lang, 'commandOpened') }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
+    paneView($.ui.resolve(e), await read($, plan), await read($, local), lang, {
+      toggle: id => toggle($, id),
+      show: async view => save($, { ...(await read($, local)), view }),
+      choose: (card, choice) => act($, card, (current, at) => withChoice(current, card.id, choice, at)),
+      dismiss: card => act($, card, (current, at) => withDismiss(current, card.id, at)),
+      think: (card, text) => act($, card, (current, at) => withDraft(current, card.id, text, at)),
+      clear: card => stage($, current => cleared(current, card.id)),
+      send: () => sendStaged($),
+    }),
+  )
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const current = await read($, plan)
+    if (isBandEmpty(current)) return next(e)
+    const open = () => $.ui.open({ id: PANE, title: TITLE })
+    return bandView($.ui.resolve(e), current, await read($, local), lang, e.props.bodyColumns, open)
   })
 }
