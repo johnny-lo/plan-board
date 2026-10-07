@@ -1,0 +1,11 @@
+{
+  "name": "plan-board",
+  "owner": { "name": "plan-board contributors" },
+  "plugins": [
+    {
+      "name": "plan-board",
+      "source": "./plugins/plan-board",
+      "description": "Keep each repo's plan in plan/log.jsonl and review it in a pane."
+    }
+  ]
+}
