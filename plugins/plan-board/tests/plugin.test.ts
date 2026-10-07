@@ -22,7 +22,8 @@ async function summaryOf($: Engine): Promise<string> {
 }
 
 test('first_proposal_creates_log_and_gitattributes', async ($, on) => {
-  const w = world(on)
+  // An empty plan/log.jsonl is how a repo opts in (/plan init); the tools never create it themselves.
+  const w = world(on, { [LOG]: '' })
   await $.session.start({ cwd: '/repo' })
   const res = await propose($)
   expect(res.deny).toBeUndefined()
@@ -161,7 +162,7 @@ test('calls_in_the_same_millisecond_replay_in_call_order', async ($, on) => {
 })
 
 test('a_failed_gitattributes_write_does_not_undo_the_entries', async ($, on) => {
-  const w = world(on)
+  const w = world(on, { [LOG]: '' })
   w.failWrites = '.gitattributes'
   await $.session.start({ cwd: '/repo' })
   const res = await propose($)

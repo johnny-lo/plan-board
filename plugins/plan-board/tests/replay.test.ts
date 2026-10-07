@@ -166,3 +166,71 @@ test('crlf_and_bom_are_not_edits', async () => {
   expect(plan.steps).toEqual(plain.steps)
   expect(plan.applied.length).toBe(2)
 })
+
+test('item_link_adds_a_path_once_and_items_start_without_docs', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.add', { item: item('B') }),
+      entry('item.link', { item: 'A', doc: 'docs/superpowers/specs/a.md' }),
+      entry('item.link', { item: 'A', doc: 'docs/superpowers/plans/a.md' }),
+      entry('item.link', { item: 'A', doc: 'docs/superpowers/specs/a.md' }),
+    ]),
+  )
+  expect(plan.skipped).toEqual([])
+  expect(plan.items.A.docs).toEqual(['docs/superpowers/specs/a.md', 'docs/superpowers/plans/a.md'])
+  expect(plan.items.B.docs).toEqual([])
+  // The item's history shows the link, the repeat included.
+  expect(plan.itemLog.A.filter((e) => e.kind === 'item.link').length).toBe(3)
+})
+
+test('item_link_to_an_unknown_item_is_skipped_with_a_reason', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.link', { item: 'ghost', doc: 'docs/x.md' }),
+      entry('item.link', { item: 'A' }),
+      entry('item.link', { item: 'A', doc: 7 }),
+    ]),
+  )
+  expect(plan.skipped.length).toBe(3)
+  expect(plan.skipped[0].reason).toContain('unknown item')
+  expect(plan.skipped[1].reason).toContain('malformed')
+  expect(plan.skipped[2].reason).toContain('malformed')
+  expect(plan.items.A.docs).toEqual([])
+})
+
+test('docs_follow_a_split_and_a_merge', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.add', { item: item('B') }),
+      entry('item.link', { item: 'A', doc: 'a.md' }),
+      entry('item.link', { item: 'B', doc: 'b.md' }),
+      entry('item.link', { item: 'B', doc: 'a.md' }),
+      entry('item.split', { item: 'A', into: [item('A1'), item('A2')] }),
+      entry('item.merge', { items: ['A1', 'B'], into: item('M') }),
+    ]),
+  )
+  expect(plan.skipped).toEqual([])
+  expect(plan.items.A2.docs).toEqual([])
+  expect(plan.items.M.docs).toEqual(['a.md', 'b.md'])
+})
+
+test('renames_remember_the_previous_title_by_entry_id', async () => {
+  const added = [entry('item.add', { item: item('A', 'Alpha') }), entry('step.add', { item: 'A', step: { id: 's1', title: 'one' } })]
+  const rename = entry('item.edit', { item: 'A', title: 'Beta' })
+  const reword = entry('step.edit', { step: 's1', title: 'uno' })
+  const goalOnly = entry('item.edit', { item: 'A', goal: 'new goal' })
+  const same = entry('item.edit', { item: 'A', title: 'Beta' })
+  const again = entry('item.edit', { item: 'A', title: 'Gamma' })
+  const plan = await replay(await logText([...added, rename, reword, goalOnly, same, again]))
+  expect(Object.getPrototypeOf(plan.previousNames)).toBeNull()
+  expect(plan.previousNames[rename.id]).toBe('Alpha')
+  expect(plan.previousNames[reword.id]).toBe('one')
+  expect(plan.previousNames[again.id]).toBe('Beta')
+  expect(Object.hasOwn(plan.previousNames, goalOnly.id)).toBe(false)
+  expect(Object.hasOwn(plan.previousNames, same.id)).toBe(false)
+  expect(Object.keys(plan.previousNames).length).toBe(3)
+  expect(plan.items.A.title).toBe('Gamma')
+})

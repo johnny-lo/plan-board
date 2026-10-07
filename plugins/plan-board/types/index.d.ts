@@ -21,6 +21,8 @@ export type StepChange =
   | { kind: 'step.move'; data: { step: string; item: string; after?: string } }
   | { kind: 'step.assign'; data: { step: string; to: string } }
   | { kind: 'step.status'; data: { step: string; status: StepStatus; result?: string } }
+/** Links a document (a path from the repo root) to an item. Not an item-level change: it needs no approval. */
+export type LinkChange = { kind: 'item.link'; data: { item: string; doc: string } }
 export type CardOption = { label: string; effect: string; recommended?: boolean; reason?: string }
 export type CardSpec = {
   id: string; type: 'question' | 'proposal'; item?: string; step?: string
@@ -30,14 +32,17 @@ export type CardChange =
   | { kind: 'card.open'; data: { card: CardSpec } }
   | { kind: 'card.resolve'; data: { card: string; outcome: string; choice?: string } }
 export type EditChange = { kind: 'edit.keep' | 'edit.drop'; data: { lines: string[]; summary: string } }
-export type Change = ItemChange | StepChange | CardChange | EditChange
+export type Change = ItemChange | LinkChange | StepChange | CardChange | EditChange
 export type Entry = Change & { id: string; at: string; why: string; basis: Basis }
 
-export type Item = { id: string; title: string; goal: string; steps: string[] }
+export type Item = { id: string; title: string; goal: string; steps: string[]; docs: string[] }
 export type Step = { id: string; item: string; title: string; status: StepStatus; assignee?: string; evidence?: { thoth?: string; result?: string } }
 export type Card = CardSpec & { openedAt: string; resolved?: { outcome: string; choice?: string; at: string } }
 export type Flagged = { raw: string; hash: string; entry: Entry | null }
+/** Where the log was read from: the repo's plan/log.jsonl, or the text this machine keeps in $.store. */
+export type Storage = 'repo' | 'local'
 export type Plan = {
+  storage: Storage
   order: string[]
   items: Record<string, Item>
   steps: Record<string, Step>
@@ -48,6 +53,8 @@ export type Plan = {
   itemLog: Record<string, Entry[]>
   /** Last known title of every item and step, and question of every card, including removed ones. */
   names: Record<string, string>
+  /** The title an item.edit (with a new title) or a step.edit replaced, by the id of that entry. */
+  previousNames: Record<string, string>
   flagged: Flagged[]
   skipped: { entry: Entry; reason: string }[]
 }

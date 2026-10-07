@@ -1,11 +1,12 @@
-import type { Entry, Plan, Step } from '../types'
+import type { Entry, Plan, Step, Storage } from '../types'
 import { checkLine } from './checksum.ts'
 
 /** A map without a prototype, so ids such as 'constructor' or '__proto__' are plain keys. */
 const table = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
 
-export function emptyPlan(): Plan {
+export function emptyPlan(storage: Storage = 'repo'): Plan {
   return {
+    storage,
     order: [],
     items: table(),
     steps: table(),
@@ -13,6 +14,7 @@ export function emptyPlan(): Plan {
     applied: [],
     itemLog: table(),
     names: table(),
+    previousNames: table(),
     flagged: [],
     skipped: [],
   }
@@ -24,7 +26,7 @@ const has = (table: Record<string, unknown>, id: unknown): boolean =>
   typeof id === 'string' && Object.prototype.hasOwnProperty.call(table, id)
 
 function addItem(plan: Plan, spec: Spec, at: number): void {
-  plan.items[spec.id] = { id: spec.id, title: spec.title, goal: spec.goal, steps: [] }
+  plan.items[spec.id] = { id: spec.id, title: spec.title, goal: spec.goal, steps: [], docs: [] }
   plan.order.splice(at, 0, spec.id)
   plan.names[spec.id] = spec.title
 }
@@ -77,6 +79,8 @@ function hasValidData(entry: Entry): boolean {
       return isString(d.item) && isOptString(d.title) && isOptString(d.goal)
     case 'item.reorder':
       return isStrings(d.order)
+    case 'item.link':
+      return isString(d.item) && isString(d.doc) && d.doc.trim() !== ''
     case 'step.add':
       return isString(d.item) && isObject(d.step) && isString(d.step.id) && isString(d.step.title) && isOptString(d.after)
     case 'step.edit':
@@ -129,10 +133,12 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       if (new Set(ids).size !== ids.length) return `item exists: ${ids.join(',')} repeats an id`
       const at = plan.order.indexOf(item)
       const moved = plan.items[item].steps
+      const docs = plan.items[item].docs
       delete plan.items[item]
       plan.order.splice(at, 1)
       into.forEach((spec, n) => addItem(plan, spec, at + n))
       plan.items[ids[0]].steps = moved
+      plan.items[ids[0]].docs = docs
       for (const s of moved) plan.steps[s].item = ids[0]
       return null
     }
@@ -145,6 +151,7 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       const at = Math.min(...items.map((id) => plan.order.indexOf(id)))
       const moved: string[] = []
       for (const id of items) moved.push(...plan.items[id].steps)
+      const docs = [...new Set(items.flatMap((id) => plan.items[id].docs))]
       for (const id of items) {
         delete plan.items[id]
         plan.order.splice(plan.order.indexOf(id), 1)
@@ -152,6 +159,7 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       const insertAt = Math.min(at, plan.order.length)
       addItem(plan, into, insertAt)
       plan.items[into.id].steps = moved
+      plan.items[into.id].docs = docs
       for (const s of moved) plan.steps[s].item = into.id
       return null
     }
@@ -159,6 +167,7 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       const { item, title, goal } = entry.data
       if (!has(plan.items, item)) return `unknown item: ${item}`
       if (title !== undefined) {
+        if (title !== plan.items[item].title) plan.previousNames[entry.id] = plan.items[item].title
         plan.items[item].title = title
         plan.names[item] = title
       }
@@ -176,6 +185,12 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       plan.order = [...order]
       return null
     }
+    case 'item.link': {
+      const { item, doc } = entry.data
+      if (!has(plan.items, item)) return `unknown item: ${item}`
+      if (!plan.items[item].docs.includes(doc)) plan.items[item].docs.push(doc)
+      return null
+    }
     case 'step.add': {
       const { item, step, after } = entry.data
       if (!has(plan.items, item)) return `unknown item: ${item}`
@@ -188,6 +203,7 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
     case 'step.edit': {
       const { step, title } = entry.data
       if (!has(plan.steps, step)) return `unknown step: ${step}`
+      if (title !== plan.steps[step].title) plan.previousNames[entry.id] = plan.steps[step].title
       plan.steps[step].title = title
       plan.names[step] = title
       return null
@@ -267,6 +283,7 @@ function touchedAfter(entry: Entry): string[] {
       return [entry.data.item.id]
     case 'item.remove':
     case 'item.edit':
+    case 'item.link':
       return [entry.data.item]
     case 'item.split':
       return [entry.data.item, ...entry.data.into.map((i) => i.id)]
@@ -295,8 +312,8 @@ function wellFormed(entry: Entry): boolean {
   )
 }
 
-export async function replay(text: string): Promise<Plan> {
-  const plan = emptyPlan()
+export async function replay(text: string, storage: Storage = 'repo'): Promise<Plan> {
+  const plan = emptyPlan(storage)
   const body = text.startsWith('﻿') ? text.slice(1) : text
   const checked: { raw: string; entry: Entry | null; isSealed: boolean; hash: string }[] = []
   const keep = new Set<string>()

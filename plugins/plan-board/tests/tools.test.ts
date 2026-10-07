@@ -374,3 +374,37 @@ test('blank_evidence_counts_as_missing', async () => {
   expect(kept.entries[0].basis).toEqual({ type: 'ai' })
   expect(kept.entries[0].data).toEqual({ step: 's1', status: 'done', result: 'fine' })
 })
+
+test('update_step_link_writes_item_link_with_basis_ai', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') })])
+  const run = (op: object, extra: object = {}) => TOOLS.update_step.run(ctxOf(plan), { why: 'spec written', ops: [op], ...extra })
+  const linked = good(run({ action: 'link', item: 'A', doc: 'docs/superpowers/specs/a.md' }, { evidence: { thoth: 'T1' } }))
+  expect(linked.entries.length).toBe(1)
+  expect(linked.entries[0].kind).toBe('item.link')
+  expect(linked.entries[0].data).toEqual({ item: 'A', doc: 'docs/superpowers/specs/a.md' })
+  expect(linked.entries[0].basis).toEqual({ type: 'ai' })
+  expect(linked.entries[0].why).toBe('spec written')
+  expect(linked.message).toContain('docs/superpowers/specs/a.md')
+
+  expect(bad(run({ action: 'link', item: 'A', doc: '' }))).toContain('doc')
+  expect(bad(run({ action: 'link', item: 'A', doc: '   ' }))).toContain('doc')
+  expect(bad(run({ action: 'link', item: 'A' }))).toContain('doc')
+  expect(bad(run({ action: 'link', doc: 'x.md' }))).toContain('item')
+  expect(bad(run({ action: 'link', item: 'ghost', doc: 'x.md' }))).toContain('unknown item')
+  const schema = JSON.stringify(TOOLS.update_step.inputSchema)
+  expect(schema).toContain('"link"')
+  expect(schema).toContain('"doc"')
+})
+
+test('a_link_is_not_an_item_level_proposal', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') })])
+  const link = [{ kind: 'item.link', data: { item: 'A', doc: 'x.md' } }]
+  expect(bad(TOOLS.propose_change.run(ctxOf(plan), { question: 'q', why: 'w', changes: link }))).toContain('update_step')
+})
+
+test('keeping_a_flagged_link_needs_no_card', async () => {
+  const link = JSON.stringify({ id: 'abcabcabcabc', at: '2026-10-07T00:00:00.500Z', kind: 'item.link', why: 'x', basis: { type: 'ai' }, data: { item: 'A', doc: 'x.md' } })
+  const plan = await planOf([entry('item.add', { item: item('A') })], link + '\n')
+  expect(plan.flagged.length).toBe(1)
+  good(TOOLS.resolve_direct_edit.run(ctxOf(plan), { action: 'keep', summary: 'a link' }))
+})

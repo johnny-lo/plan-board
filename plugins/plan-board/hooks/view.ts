@@ -32,6 +32,13 @@ export function openCards(plan: Plan): Card[] {
     })
 }
 
+/** Whether the user answered the card: a sent choice or a dismissal. A thought alone leaves it open. */
+export const isAnswered = (local: Local, cardId: string): boolean => {
+  if (!Object.hasOwn(local.sent, cardId)) return false
+  const pick = local.sent[cardId]
+  return pick.choice !== undefined || pick.isDismissed === true
+}
+
 export function blockedSteps(plan: Plan): Set<string> {
   const blocked = new Set<string>()
   for (const card of openCards(plan)) if (card.step !== undefined) blocked.add(card.step)
@@ -62,7 +69,7 @@ export function bandCounts(plan: Plan, local: Local): { doing: number; waiting: 
   const states = itemStates(plan)
   return {
     doing: Object.values(states).filter(state => state === 'doing').length,
-    waiting: openCards(plan).filter(card => !Object.hasOwn(local.sent, card.id)).length,
+    waiting: openCards(plan).filter(card => !isAnswered(local, card.id)).length,
     isEdited: plan.flagged.length > 0,
   }
 }

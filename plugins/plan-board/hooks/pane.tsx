@@ -2,8 +2,8 @@ import type { EngineInterface } from 'claude-code'
 
 import { t } from './i18n.ts'
 import type { Key, Lang } from './i18n.ts'
-import { changeLine, fit, historyLines, textWidth } from './lines.ts'
-import { bandCounts, blockedSteps, cardPosition, historyOf, itemStates, openCards, recentFor } from './view.ts'
+import { assignedText, changeLine, fit, historyLines, textWidth } from './lines.ts'
+import { bandCounts, blockedSteps, cardPosition, historyOf, isAnswered, itemStates, openCards, recentFor } from './view.ts'
 import type { Card, ItemState, Local, Plan, Step } from '../types'
 
 /** How many earlier entries a card shows. */
@@ -61,16 +61,26 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
   const open = openCards(current)
   const counts = bandCounts(current, mine)
   const stagedCount = open.filter(card => Object.hasOwn(mine.staged, card.id)).length
-  const isSent = (card: Card): boolean => Object.hasOwn(mine.sent, card.id)
+  // A card the user answered with a choice or a skip is dimmed; one that only got a thought stays open to answer.
+  const isSent = (card: Card): boolean => isAnswered(mine, card.id)
   // The card that opens by itself is the first one still waiting for the user.
   const firstId = open.find(card => !isSent(card))?.id
+  const localLine = current.storage === 'local' ? <Text dimColor wrap="wrap">{t(lang, 'localMode')}</Text> : null
 
   const overview = () => {
-    if (current.order.length === 0) return <Text dimColor>{t(lang, 'emptyRepo')}</Text>
+    if (current.order.length === 0) {
+      return (
+        <Box flexDirection="column">
+          {localLine}
+          <Text dimColor>{t(lang, 'emptyRepo')}</Text>
+        </Box>
+      )
+    }
     const states = itemStates(current)
     const blocked = blockedSteps(current)
     return (
       <Box flexDirection="column">
+        {localLine}
         {current.order.map(id => {
           const item = current.items[id]
           const isOpen = mine.expanded.includes(id)
@@ -82,6 +92,11 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
               {isOpen && (
                 <Box flexDirection="column" paddingLeft={2}>
                   <Text wrap="wrap">{t(lang, 'goal', { goal: item.goal })}</Text>
+                  {item.docs.map((doc, i) => (
+                    <Text key={`doc:${id}:${i}`} wrap="wrap">
+                      {t(lang, 'doc', { path: doc })}
+                    </Text>
+                  ))}
                   {item.steps
                     .filter(stepId => Object.hasOwn(current.steps, stepId))
                     .map(stepId => {
@@ -91,6 +106,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
                       return (
                         <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
                           <Text>{`${markOf(step, waiting !== undefined, lang)} ${step.title}`}</Text>
+                          {step.assignee !== undefined && <Text dimColor>{assignedText(step.assignee, lang)}</Text>}
                           {note !== '' && <Text dimColor>{note}</Text>}
                         </Box>
                       )
@@ -123,6 +139,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
   const cardBox = (card: Card) => {
     const where = whereText(current, card, lang)
     const staged = Object.hasOwn(mine.staged, card.id) ? mine.staged[card.id] : undefined
+    const thought = Object.hasOwn(mine.sent, card.id) ? mine.sent[card.id].draft : undefined
     const isFirst = card.id === firstId
     const hotkey = (i: number) => (isFirst && i < 9 ? { hotkey: String(i + 1) } : {})
     const border = (color: string) => ({ borderStyle: 'round', borderColor: color, paddingX: 1 }) as const
@@ -226,6 +243,11 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
             })
           )}
         </Box>
+        {thought !== undefined && (
+          <Box marginTop={1}>
+            <Text wrap="wrap">{t(lang, 'yourThought', { draft: thought })}</Text>
+          </Box>
+        )}
         {hasStaged && (
           <Box justifyContent="space-between" marginTop={1}>
             <Box flexDirection="column" flexShrink={1}>

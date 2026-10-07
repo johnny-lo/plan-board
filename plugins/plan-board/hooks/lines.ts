@@ -51,11 +51,19 @@ export function nameOf(plan: Plan, id: string, lang: Lang): string {
   return Object.hasOwn(plan.names, id) ? plan.names[id] : t(lang, 'unknownName')
 }
 
+/** A Thoth task id (a 26-character ULID) or a hex string of 8 or more characters: an id, not a name for a person. */
+const looksLikeId = (text: string): boolean => /^[0-9A-HJKMNP-TV-Z]{26}$/i.test(text) || /^[0-9a-f]{8,}$/i.test(text)
+
+/** Who a step is given to, as a human reads it: an id-looking value shows as a Thoth task, never as the id. */
+export function assignedText(to: string, lang: Lang): string {
+  return looksLikeId(to) ? t(lang, 'assignedToTask') : t(lang, 'assignedTo', { to })
+}
+
 const quoted = (titles: string[], lang: Lang): string =>
   lang === 'zh-TW' ? titles.map(title => `「${title}」`).join('') : titles.map(title => `"${title}"`).join(', ')
 
 /** What one change does, as `kind word` and a sentence, with names for everything it points at. */
-export function changeLine(change: Change, plan: Plan, lang: Lang): string {
+export function changeLine(change: Change, plan: Plan, lang: Lang, previous?: string): string {
   const name = (id: string): string => nameOf(plan, id, lang)
   switch (change.kind) {
     case 'item.add':
@@ -68,16 +76,26 @@ export function changeLine(change: Change, plan: Plan, lang: Lang): string {
       return `${t(lang, 'kindItem')} ${t(lang, 'itemMerge', { items: quoted(change.data.items.map(name), lang), into: change.data.into.title })}`
     case 'item.edit': {
       const parts: string[] = []
-      if (change.data.title !== undefined) parts.push(t(lang, 'itemEditTitle', { title: change.data.title }))
+      if (change.data.title !== undefined) {
+        parts.push(previous === undefined ? t(lang, 'itemEditTitle', { title: change.data.title }) : t(lang, 'renamed', { old: previous, new: change.data.title }))
+      }
       if (change.data.goal !== undefined) parts.push(t(lang, 'itemEditGoal', { goal: change.data.goal }))
-      return `${t(lang, 'kindItem')} ${t(lang, 'itemEdit', { item: name(change.data.item), changes: parts.join(lang === 'zh-TW' ? '；' : '; ') })}`
+      // A rename already says which item it was; the old name is the item.
+      const changes = parts.join(lang === 'zh-TW' ? '；' : '; ')
+      return previous !== undefined && change.data.title !== undefined && change.data.goal === undefined
+        ? `${t(lang, 'kindItem')} ${changes}`
+        : `${t(lang, 'kindItem')} ${t(lang, 'itemEdit', { item: name(change.data.item), changes })}`
     }
     case 'item.reorder':
       return `${t(lang, 'kindItem')} ${t(lang, 'itemReorder')}`
     case 'step.add':
       return `${t(lang, 'kindStep')} ${t(lang, 'stepAdd', { step: change.data.step.title, item: name(change.data.item) })}`
+    case 'item.link':
+      return `${t(lang, 'kindItem')} ${t(lang, 'itemLink', { item: name(change.data.item), doc: change.data.doc })}`
     case 'step.edit':
-      return `${t(lang, 'kindStep')} ${t(lang, 'stepEdit', { title: change.data.title })}`
+      return previous === undefined
+        ? `${t(lang, 'kindStep')} ${t(lang, 'stepEdit', { title: change.data.title })}`
+        : `${t(lang, 'kindStep')} ${t(lang, 'renamed', { old: previous, new: change.data.title })}`
     case 'step.remove':
       return `${t(lang, 'kindStep')} ${t(lang, 'stepRemove', { step: name(change.data.step) })}`
     case 'step.move':
@@ -85,7 +103,7 @@ export function changeLine(change: Change, plan: Plan, lang: Lang): string {
     case 'step.assign':
       return change.data.to === ''
         ? `${t(lang, 'kindStep')} ${t(lang, 'stepUnassign', { step: name(change.data.step) })}`
-        : `${t(lang, 'kindStep')} ${t(lang, 'stepAssign', { step: name(change.data.step), to: change.data.to })}`
+        : `${t(lang, 'kindStep')} ${t(lang, 'stepAssign', { step: name(change.data.step), assigned: assignedText(change.data.to, lang) })}`
     case 'step.status': {
       const status = t(lang, change.data.status === 'done' ? 'stepDone' : change.data.status === 'doing' ? 'stepDoing' : 'stepTodo')
       return `${t(lang, 'kindStep')} ${t(lang, 'stepStatus', { step: name(change.data.step), status })}`
@@ -119,7 +137,8 @@ function sourceOf(entry: Entry, plan: Plan, lang: Lang): string {
 
 /** One log entry as the pane shows it: time, kind and what changed, where it came from; then the reason. */
 export function historyLines(entry: Entry, plan: Plan, lang: Lang): string[] {
-  const lines = [`${stamp(entry.at)} ${changeLine(entry, plan, lang)}${sourceOf(entry, plan, lang)}`]
+  const previous = Object.hasOwn(plan.previousNames, entry.id) ? plan.previousNames[entry.id] : undefined
+  const lines = [`${stamp(entry.at)} ${changeLine(entry, plan, lang, previous)}${sourceOf(entry, plan, lang)}`]
   if (entry.why !== '') lines.push(t(lang, 'reason', { why: entry.why }))
   return lines
 }

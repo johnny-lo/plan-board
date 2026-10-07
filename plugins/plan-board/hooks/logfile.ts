@@ -1,5 +1,5 @@
 import { sealEntry, sha16 } from './checksum.ts'
-import type { Entry } from '../types'
+import type { Entry, Storage } from '../types'
 
 /**
  * The part of the engine's `$` these functions use. The plugin loader follows `$` only inside the file that
@@ -14,6 +14,13 @@ export type Files = {
     write: (path: string, text: string) => Promise<void>
     stat: (path: string) => Promise<{ size: number; mtimeMs: number }>
   }
+}
+
+/** The part of `$.store` the local log uses; handed over as closures for the same reason as Files. */
+export type Store = {
+  get: (key: string) => Promise<unknown>
+  set: (key: string, value: unknown) => Promise<void>
+  delete: (key: string) => Promise<void>
 }
 
 const TRIES = 3
@@ -33,9 +40,70 @@ export async function rootOf($: Files): Promise<string> {
 
 export const logPath = (root: string): string => `${root}/plan/log.jsonl`
 
-export async function readLog($: Files, root: string): Promise<string> {
+/** Where a worktree's log lives in $.store while the repo has no plan/log.jsonl. */
+export const storeKey = (root: string): string => 'log:' + root
+
+/**
+ * Where the log's text is kept. `read` answers the text with a version that changes whenever the text does
+ * (null: nothing there); `version` asks for the current one again.
+ */
+export type Medium = {
+  read: () => Promise<{ text: string; version: string } | null>
+  version: () => Promise<string | null>
+  write: (text: string) => Promise<void>
+  /** Whether a write may make the log appear where there was none. */
+  mayCreate: boolean
+}
+
+async function stamped($: Files, path: string): Promise<string | null> {
+  if (!(await $.fs.exists(path))) return null
+  const { size, mtimeMs } = await $.fs.stat(path)
+  return `${size}:${mtimeMs}`
+}
+
+/** plan/log.jsonl; it is never created by a write, only by /plan init. */
+export function repoMedium($: Files, root: string): Medium {
   const path = logPath(root)
-  return (await $.fs.exists(path)) ? $.fs.read(path) : ''
+  return {
+    read: async () => {
+      const version = await stamped($, path)
+      return version === null ? null : { version, text: await $.fs.read(path) }
+    },
+    version: () => stamped($, path),
+    write: (text) => $.fs.write(path, text),
+    mayCreate: false,
+  }
+}
+
+/** The same text format kept in $.store, for a repo that has no plan/log.jsonl. */
+export function storeMedium(store: Store, root: string): Medium {
+  const key = storeKey(root)
+  const textOf = async (): Promise<string | null> => {
+    const value = await store.get(key)
+    return typeof value === 'string' ? value : null
+  }
+  return {
+    read: async () => {
+      const text = await textOf()
+      return text === null ? null : { text, version: text }
+    },
+    version: textOf,
+    write: (text) => store.set(key, text),
+    mayCreate: true,
+  }
+}
+
+/** Repo mode when `<root>/plan/log.jsonl` exists, local mode otherwise; asked again on every read. */
+export async function modeOf($: Files, root: string): Promise<Storage> {
+  return (await $.fs.exists(logPath(root))) ? 'repo' : 'local'
+}
+
+export async function readLog($: Files, root: string): Promise<string> {
+  return (await repoMedium($, root).read())?.text ?? ''
+}
+
+export async function readStored(store: Store, root: string): Promise<string> {
+  return (await storeMedium(store, root).read())?.text ?? ''
 }
 
 /** The log with the lines hashing into `drop` removed and one sealed line per entry added; the text always ends in a newline. */
@@ -54,37 +122,57 @@ export async function nextText(text: string, entries: Entry[], drop: string[]): 
   return out
 }
 
-type Seen = { size: number; mtimeMs: number } | null
-
-async function seen($: Files, path: string): Promise<Seen> {
-  if (!(await $.fs.exists(path))) return null
-  const { size, mtimeMs } = await $.fs.stat(path)
-  return { size, mtimeMs }
-}
-
-const same = (a: Seen, b: Seen): boolean => (a === null || b === null ? a === b : a.size === b.size && a.mtimeMs === b.mtimeMs)
-
 /**
- * Writes the entries (and removes the dropped lines) unless another session changed the file meanwhile; at most 3 tries.
- * `'no-attributes'`: the entries are written, but .gitattributes could not be brought up to date.
+ * Writes the entries (and removes the dropped lines) unless another session changed the text meanwhile; at most 3 tries.
+ * `'missing'`: the medium holds no log and may not make one.
  */
-export async function commitEntries($: Files, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'no-attributes'> {
-  const path = logPath(root)
+export async function commitText(medium: Medium, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing'> {
   for (let attempt = 0; attempt < TRIES; attempt++) {
-    const before = await seen($, path)
-    const text = before === null ? '' : await $.fs.read(path)
-    const next = await nextText(text, entries, drop)
-    if (!same(before, await seen($, path))) continue
-    await $.fs.write(path, next)
-    // The log is written: from here the entries count as committed, whatever happens to .gitattributes.
-    try {
-      await ensureAttributes($, root)
-    } catch {
-      return 'no-attributes'
-    }
+    const before = await medium.read()
+    if (before === null && !medium.mayCreate) return 'missing'
+    const next = await nextText(before?.text ?? '', entries, drop)
+    if ((await medium.version()) !== (before?.version ?? null)) continue
+    await medium.write(next)
     return 'ok'
   }
   return 'busy'
+}
+
+/**
+ * Appends to plan/log.jsonl (repo mode).
+ * `'no-attributes'`: the entries are written, but .gitattributes could not be brought up to date.
+ */
+export async function commitEntries($: Files, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing' | 'no-attributes'> {
+  const outcome = await commitText(repoMedium($, root), entries, drop)
+  if (outcome !== 'ok') return outcome
+  // The log is written: from here the entries count as committed, whatever happens to .gitattributes.
+  try {
+    await ensureAttributes($, root)
+  } catch {
+    return 'no-attributes'
+  }
+  return 'ok'
+}
+
+/** Appends to the log kept in $.store (local mode); .gitattributes is not touched. */
+export function commitLocal(store: Store, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing'> {
+  return commitText(storeMedium(store, root), entries, drop)
+}
+
+/**
+ * What /plan init does: plan/log.jsonl gets the local text unchanged, the local copy goes away and .gitattributes gets its line.
+ * `'exists'`: the repo already has the file, so nothing was touched.
+ */
+export async function initRepo($: Files, store: Store, root: string): Promise<'created' | 'exists' | 'no-attributes'> {
+  if (await $.fs.exists(logPath(root))) return 'exists'
+  await $.fs.write(logPath(root), await readStored(store, root))
+  await store.delete(storeKey(root))
+  try {
+    await ensureAttributes($, root)
+  } catch {
+    return 'no-attributes'
+  }
+  return 'created'
 }
 
 export async function ensureAttributes($: Files, root: string): Promise<void> {
