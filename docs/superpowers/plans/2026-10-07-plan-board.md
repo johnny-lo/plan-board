@@ -330,7 +330,9 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
 共同規則：
 - 輸入的型別不對、少了必填欄位、`why`／`outcome`／`summary` 是空字串，都回傳 `{ ok: false }`，`error` 是英文，而且要寫出是哪個欄位。
 - 驗證方式：把 `ctx.plan` 用 `structuredClone` 複製一份，依序對每一筆要寫入的紀錄跑 `applyEntry`。任何一筆回傳原因，就回傳 `{ ok: false, error: <原因> }`。規則只寫在 `replay.ts` 一個地方。
-- 每筆紀錄的 `id` 用 `ctx.newId(12)`、`at` 用 `ctx.now`。新項目、新步驟、新卡片的 id 用 `ctx.newId(8)`。
+- 每筆紀錄的 `id` 用 `ctx.newId(12)`；第 i 筆（從 0 起算）的 `at` 用 `ctx.now` 加 i 毫秒（`new Date(Date.parse(ctx.now) + i).toISOString()`），讓重算時依 `(at, id)` 排序的結果和寫入順序一樣。新項目、新步驟、新卡片的 id 用 `ctx.newId(8)`。
+- 位置參照（`item.add` 的 `before`、`step.add`／`step.move` 的 `after`）有給就必須存在，`after` 還必須是同一個項目裡的步驟；否則回傳錯誤。
+- `apply_change` 拒絕 `changes` 是空的、或含有任何不是 `item.*` 的卡片。`evidence.thoth`／`evidence.result` 去掉前後空白後是空的，就當成沒給。
 - `message` 是英文，寫出新產生的 id，例如 `Proposed card 1a2b3c4d; wait for the user's answer.`、`Added step 9f8e7d6c to item 1a2b3c4d.`。
 
 各工具的輸入（`inputSchema` 照這個寫成 JSON Schema，`description` 用一句英文說明）和寫入：
@@ -442,7 +444,7 @@ test('as_local_survives_garbage')          // asLocal(undefined), asLocal(42) �
 接線（spec 6）：
 - `session.start`：算出根目錄、`refresh`、註冊 `TOOLS` 裡的 6 個工具，記住 `$.tool.register` 回傳的完整工具名稱（`Map<string, ToolName>`），註冊 `/plan` 指令。
 - `tool.call`：用一個不帶篩選條件的處理函式。
-  - 工具名稱在上面的 Map 裡：組出 `ToolContext`。`now` 用 `new Date(await $.clock.now()).toISOString()`；`isApproved` 讀 local。跑 `run`，`ok: false` 就回傳 `{ deny: error }`。`ok: true` 就 `commitEntries`，結果是 `'busy'` 時回傳 `{ deny: 'The plan file is being written by another session; try again.' }`；否則 `refresh`，回傳 `{ result: message }`。
+  - 工具名稱在上面的 Map 裡：組出 `ToolContext`。`now` 用 `$.clock.now()` 和「計畫裡最晚一筆紀錄的 `at` 加 1 毫秒」兩者中較晚的那個，轉成 ISO 字串；`isApproved` 讀 local。跑 `run`，`ok: false` 就回傳 `{ deny: error }`。`ok: true` 就 `commitEntries`，結果是 `'busy'` 時回傳 `{ deny: 'The plan file is being written by another session; try again.' }`；否則 `refresh`，回傳 `{ result: message }`。
   - 工具是 `Edit` 或 `Write`（看 `file_path`），或是 `NotebookEdit`（看 `notebook_path`）：路徑把 `\` 換成 `/` 之後，以 `${root}/plan/` 開頭的，回傳 `{ deny: 'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, resolve_decision, resolve_direct_edit.' }`。
   - 其他工具都交給 `next(e)`。
 - `prompt.submit`：先 `refresh`，再 `next(e)`。
