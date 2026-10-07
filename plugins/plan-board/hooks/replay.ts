@@ -150,6 +150,25 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       else target.evidence = { result }
       return null
     }
+    case 'card.open': {
+      const { card } = entry.data
+      if (has(plan.cards, card.id)) return `card exists: ${card.id}`
+      plan.cards[card.id] = { ...card, openedAt: entry.at }
+      plan.names[card.id] = card.question
+      return null
+    }
+    case 'card.resolve': {
+      const { card, outcome, choice } = entry.data
+      if (!has(plan.cards, card)) return `unknown card: ${card}`
+      if (plan.cards[card].resolved) return `card already resolved: ${card}`
+      const resolved: { outcome: string; choice?: string; at: string } = { outcome, at: entry.at }
+      if (choice !== undefined) resolved.choice = choice
+      plan.cards[card].resolved = resolved
+      return null
+    }
+    case 'edit.keep':
+    case 'edit.drop':
+      return null
     default:
       return `unsupported kind: ${entry.kind}`
   }
@@ -159,6 +178,10 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
 function touchedBefore(plan: Plan, entry: Entry): string[] {
   const d = entry.data as Record<string, unknown>
   if (typeof d.step === 'string' && has(plan.steps, d.step)) return [plan.steps[d.step].item]
+  if (typeof d.card === 'string' && has(plan.cards, d.card)) {
+    const item = plan.cards[d.card].item
+    if (item !== undefined) return [item]
+  }
   return []
 }
 
@@ -178,6 +201,8 @@ function touchedAfter(entry: Entry): string[] {
       return [entry.data.item]
     case 'step.move':
       return [entry.data.item]
+    case 'card.open':
+      return entry.data.card.item !== undefined ? [entry.data.card.item] : []
     default:
       return []
   }
@@ -186,12 +211,30 @@ function touchedAfter(entry: Entry): string[] {
 export async function replay(text: string): Promise<Plan> {
   const plan = emptyPlan()
   const body = text.startsWith('﻿') ? text.slice(1) : text
-  const seen = new Set<string>()
-  const entries: Entry[] = []
+  const checked: { raw: string; entry: Entry | null; isSealed: boolean; hash: string }[] = []
+  const keep = new Set<string>()
+  const drop = new Set<string>()
   for (const raw of body.split(/\r?\n/)) {
     if (raw === '') continue
-    const { entry, isSealed } = await checkLine(raw)
-    if (entry === null || !isSealed || seen.has(entry.id)) continue
+    const result = await checkLine(raw)
+    checked.push({ raw: raw.endsWith('\r') ? raw.slice(0, -1) : raw, ...result })
+    const { entry } = result
+    if (entry !== null && result.isSealed && (entry.kind === 'edit.keep' || entry.kind === 'edit.drop')) {
+      const lines = (entry.data as { lines?: unknown }).lines
+      if (Array.isArray(lines)) for (const h of lines) (entry.kind === 'edit.keep' ? keep : drop).add(String(h))
+    }
+  }
+  const seen = new Set<string>()
+  const entries: Entry[] = []
+  for (const { raw, entry, isSealed, hash } of checked) {
+    if (!isSealed) {
+      if (drop.has(hash)) continue
+      if (entry === null || !keep.has(hash)) {
+        plan.flagged.push({ raw, hash, entry })
+        continue
+      }
+    }
+    if (entry === null || typeof entry.id !== 'string' || seen.has(entry.id)) continue
     seen.add(entry.id)
     entries.push(entry)
   }
