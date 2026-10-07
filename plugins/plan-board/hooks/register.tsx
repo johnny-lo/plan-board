@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { GUIDE, summary } from './guide.ts'
 import { langOf, t } from './i18n.ts'
-import { commitEntries, readLog, rootOf } from './logfile.ts'
-import type { Files } from './logfile.ts'
+import { commitEntries, commitLocal, initRepo, modeOf, readLog, readStored, rootOf } from './logfile.ts'
+import type { Files, Store } from './logfile.ts'
 import {
   asLocal,
   batchMessage,
@@ -36,6 +36,7 @@ const local = atom({ plugin: 'plan-board', key: 'local' } as const, emptyLocal()
 const DENY_EDIT =
   'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, resolve_decision, resolve_direct_edit.'
 const DENY_BUSY = 'The plan file is being written by another session; try again.'
+const DENY_MISSING = 'plan/log.jsonl is gone, so nothing was written. Ask the user to restore it, or to run /plan init for a fresh one.'
 const NOTE_ATTRIBUTES =
   ' Note: .gitattributes could not be updated, so plan/log.jsonl may conflict when branches merge; add the line "plan/log.jsonl merge=union" to .gitattributes.'
 
@@ -55,6 +56,12 @@ const filesOf = ($: EngineInterface): Files => ({
   },
 })
 
+const storeOf = ($: EngineInterface): Store => ({
+  get: key => $.store.get(key),
+  set: (key, value) => $.store.set(key, value),
+  delete: key => $.store.delete(key),
+})
+
 const newId = (length: 8 | 12): string => crypto.randomUUID().replace(/-/g, '').slice(0, length)
 
 async function rootNow($: EngineInterface): Promise<string> {
@@ -66,9 +73,11 @@ async function rootNow($: EngineInterface): Promise<string> {
 }
 
 // Reads the log and this machine's pane state afresh: other sessions and git pulls change both between calls.
+// The log is plan/log.jsonl when the repo has one, else the text this machine keeps in the store; asked on every read.
 async function refresh($: EngineInterface): Promise<Plan> {
   const top = await rootNow($)
-  const fresh = await replay(await readLog(filesOf($), top))
+  const mode = await modeOf(filesOf($), top)
+  const fresh = await replay(mode === 'repo' ? await readLog(filesOf($), top) : await readStored(storeOf($), top), mode)
   const before = await $.store.get(localKey(top))
   const mine = forget(asLocal(before), fresh)
   if (JSON.stringify(mine) !== JSON.stringify(before)) await $.store.set(localKey(top), mine)
@@ -209,11 +218,17 @@ export const register: Register = (on, options) => {
       if (!ran.ok) return { deny: ran.error }
       let outcome: Awaited<ReturnType<typeof commitEntries>>
       try {
-        outcome = await commitEntries(filesOf($), await rootNow($), ran.entries, ran.drop)
+        // The mode the plan was read in: the write goes where the read came from, and never makes plan/log.jsonl appear.
+        const top = await rootNow($)
+        outcome =
+          current.storage === 'repo'
+            ? await commitEntries(filesOf($), top, ran.entries, ran.drop)
+            : await commitLocal(storeOf($), top, ran.entries, ran.drop)
       } catch (err) {
-        return { deny: `Could not write plan/log.jsonl: ${err instanceof Error ? err.message : String(err)}` }
+        return { deny: `Could not write the plan: ${err instanceof Error ? err.message : String(err)}` }
       }
       if (outcome === 'busy') return { deny: DENY_BUSY }
+      if (outcome === 'missing') return { deny: DENY_MISSING }
       await refresh($)
       // The entries are in the log either way; only the merge setting is missing.
       return { result: outcome === 'no-attributes' ? ran.message + NOTE_ATTRIBUTES : ran.message }
@@ -254,7 +269,17 @@ export const register: Register = (on, options) => {
     return done
   })
 
-  on('command.run', { command: 'plan' }, async $ => {
+  on('command.run', { command: 'plan' }, async ($, e) => {
+    if ((e.args ?? '').trim() === 'init') {
+      let made: Awaited<ReturnType<typeof initRepo>>
+      try {
+        made = await initRepo(filesOf($), storeOf($), await rootNow($))
+      } catch (err) {
+        return { text: `Could not create plan/log.jsonl: ${err instanceof Error ? err.message : String(err)}` }
+      }
+      await refresh($)
+      return { text: t(lang, made === 'exists' ? 'initAlready' : made === 'created' ? 'initDone' : 'initNoAttributes') }
+    }
     await refresh($)
     await $.ui.open({ id: PANE, title: TITLE })
     return { text: t(lang, 'commandOpened') }

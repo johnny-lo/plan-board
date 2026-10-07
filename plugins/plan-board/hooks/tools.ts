@@ -69,6 +69,7 @@ function clonePlan(plan: Plan): Plan {
   copy.cards = Object.assign(Object.create(null), copy.cards)
   copy.itemLog = Object.assign(Object.create(null), copy.itemLog)
   copy.names = Object.assign(Object.create(null), copy.names)
+  copy.previousNames = Object.assign(Object.create(null), copy.previousNames)
   return copy
 }
 
@@ -134,6 +135,7 @@ function withIds(ctx: ToolContext, changes: unknown[], created: string[]): { kin
   }
   return changes.map((raw, i) => {
     if (!isObj(raw) || typeof raw.kind !== 'string') return fail(`changes[${i}] must be an object with a kind`)
+    if (raw.kind === 'item.link') return fail(`changes[${i}]: linking a document needs no approval; use update_step with action link`)
     if (!raw.kind.startsWith('item.')) return fail(`changes[${i}].kind must be an item.* change, got ${raw.kind}`)
     if (!isObj(raw.data)) return fail(`changes[${i}].data must be an object`)
     const change = structuredClone(raw) as { kind: string; data: Obj }
@@ -253,6 +255,14 @@ const updateStep = guard((ctx, input) => {
         said.push(to === '' ? `Cleared the assignee of step ${field('step')}.` : `Assigned step ${field('step')} to ${to}.`)
         break
       }
+      case 'link': {
+        const item = field('item')
+        const doc = field('doc')
+        // A link is the model's own bookkeeping, whatever evidence the call carries.
+        entries.push(make(ctx, 'item.link', { item, doc }, why, ai))
+        said.push(`Linked ${doc} to item ${item}.`)
+        break
+      }
       case 'status': {
         const status = raw.status
         if (typeof status !== 'string' || !STATUSES.includes(status)) return fail(`${at}.status must be one of ${STATUSES.join(', ')}`)
@@ -266,7 +276,7 @@ const updateStep = guard((ctx, input) => {
         break
       }
       default:
-        return fail(`${at}.action must be one of add, edit, remove, move, assign, status`)
+        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, link`)
     }
   })
   return accept(ctx, entries, said.join(' '))
@@ -320,7 +330,10 @@ const resolveDirectEdit = guard((ctx, input) => {
   const flagged = ctx.plan.flagged
   if (flagged.length === 0) return fail('no directly edited lines are flagged; there is nothing to resolve')
   if (action === 'keep') {
-    const touchesItems = flagged.some((f) => f.entry !== null && typeof f.entry.kind === 'string' && f.entry.kind.startsWith('item.'))
+    // A link is no item-level change, so keeping it needs no card.
+    const touchesItems = flagged.some(
+      (f) => f.entry !== null && typeof f.entry.kind === 'string' && f.entry.kind.startsWith('item.') && f.entry.kind !== 'item.link',
+    )
     if (touchesItems || cardId !== undefined) {
       if (cardId === undefined) return fail('card is required to keep flagged item changes: ask the user with a card, then pass the resolved card')
       if (!has(ctx.plan.cards, cardId)) return fail(`unknown card: ${cardId}`)
@@ -378,7 +391,7 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
     run: applyChange,
   },
   update_step: {
-    description: 'Add, edit, remove, move, assign or set the status of steps, recording why.',
+    description: 'Add, edit, remove, move, assign or set the status of steps, or link a document (a path from the repo root, such as a superpowers spec or plan) to an item, recording why.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -388,8 +401,9 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
           items: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status'] },
+              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'link'] },
               item: str,
+              doc: { ...str, description: 'For link: path of the document from the repo root.' },
               step: str,
               title: str,
               after: str,

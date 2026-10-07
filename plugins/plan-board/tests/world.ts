@@ -19,6 +19,8 @@ export type World = {
   clockStep: number
   /** While set, a write to a path ending with this fails, as on a read-only file. */
   failWrites: string | null
+  /** Called on every store read before it answers, so a test can play another session writing at that moment. */
+  onStoreGet: ((key: string) => void) | null
 }
 
 // A session on /repo, in memory: files, the plugin store, git, a clock that moves by itself and timers the test fires.
@@ -39,6 +41,7 @@ export function world(on: On, files: Record<string, string> = {}): World {
     statBump: false,
     clockStep: 1000,
     failWrites: null,
+    onStoreGet: null,
   }
   // The engine hands paths over in the host's spelling (drive letter and backslashes on Windows); files are keyed /repo/plan.
   const key = (path: string): string => path.replace(/^[a-z]:/i, '').replace(/\\/g, '/')
@@ -60,7 +63,14 @@ export function world(on: On, files: Record<string, string> = {}): World {
     if (w.statBump) bumps += 1
     return { value: { kind: 'file' as const, size: w.files[key(e.path)].length + bumps, mtimeMs: mtimes[key(e.path)] ?? 0, isLink: false } }
   })
-  on('store.get', (_, e) => ({ value: w.store.get(e.key) }))
+  on('store.get', (_, e) => {
+    w.onStoreGet?.(e.key)
+    return { value: w.store.get(e.key) }
+  })
+  on('store.delete', (_, e) => {
+    w.store.delete(e.key)
+    return { value: undefined }
+  })
   on('store.set', (_, e) => {
     w.store.set(e.key, JSON.parse(JSON.stringify(e.value)))
     return { value: undefined }

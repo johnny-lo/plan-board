@@ -1,19 +1,25 @@
 import type { Local, Plan } from '../types'
-import { blockedSteps, itemStates, openCards } from './view.ts'
+import { blockedSteps, isAnswered, itemStates, openCards } from './view.ts'
 
 export const GUIDE: string = [
   '# Plan board',
-  "This repo keeps its plan in plan/log.jsonl: items (the user's level) and steps (yours). The pane shows it to the user. Change it only through these tools, never by editing files under plan/.",
+  "This repo's plan (the first line of the summary says where it is kept) has items (the user's level) and steps (yours). The pane shows it to the user. Change it only through these tools, never by editing files under plan/.",
   "- Item changes (add, remove, split, merge, edit title or goal, reorder) need the user's approval: call propose_change, wait for the user's answer, then apply_change with that card. If the user agreed in chat rather than in the pane, pass their words as `chat`. If they changed the proposal in a thought, resolve the card and propose again.",
   '- Steps are yours: add, edit, remove, move, assign and set their status with update_step whenever the work changes, without asking. Always give a one-line why.',
   '- Mark a step done only with evidence: the Thoth task id once your Thoth tools show the task passed, otherwise a one-line result.',
   '- Ask the user with add_decision whenever a choice is theirs: a one-line question, why you ask now, 2-4 options each with what it leads to, at most one recommended with its reason. Attach it to the item and step it is about. Set blocking only when you cannot continue without the answer.',
   '- Choices from the pane reach you as messages. Close every answered card: resolve_decision with a non-empty outcome, or apply_change for an approved proposal.',
   '- When the summary lists directly edited lines, read `git diff -- plan/log.jsonl`. If they touch items, ask the user with a card whether to keep or revert them, then call resolve_direct_edit with that card; otherwise call resolve_direct_edit yourself. To revert a line that was valid before, restore it with git instead of dropping it.',
+  '- Where the plan is kept: the first line of the summary says. If it says "this machine only", the plan is not in git yet; when this repo looks like a good place to keep it, ask the user with add_decision before suggesting /plan init, and never create plan/ yourself.',
+  '- When you write a superpowers spec or plan for an item, link the file to it with update_step, action link (item, doc: the path from the repo root). Once the plan is written, add each of its tasks as a step of that item (title copied as written), and when a task is done, mark its step done. Superpowers says how the work is done; plan-board says how far it is and why it changed.',
   '- The ids in the summary are for you; never show them to the user.',
 ].join('\n')
 
 const WORDS = { done: 'done', doing: 'in progress', next: 'next', later: 'later' }
+const STORAGE = {
+  repo: 'Plan storage: repo (plan/log.jsonl)',
+  local: 'Plan storage: this machine only (run /plan init to keep it in the repo)',
+}
 
 export function summary(plan: Plan, local: Local): string {
   const sections: string[] = []
@@ -27,7 +33,8 @@ export function summary(plan: Plan, local: Local): string {
   plan.order.forEach((id, index) => {
     const item = plan.items[id]
     const state = states[id]
-    items.push(`${index + 1}. [${id}] ${item.title} — ${WORDS[state]} (goal: ${item.goal})`)
+    const docs = item.docs.length > 0 ? `; docs: ${item.docs.join(', ')}` : ''
+    items.push(`${index + 1}. [${id}] ${item.title} — ${WORDS[state]} (goal: ${item.goal}${docs})`)
     if (state !== 'doing' && state !== 'next') return
     for (const stepId of item.steps) {
       const step = plan.steps[stepId]
@@ -45,7 +52,8 @@ export function summary(plan: Plan, local: Local): string {
     const lines = cards.map(card => {
       let line = `- [${card.id}] ${card.question} {${card.type}}`
       if (card.blocking) line += ' (blocking)'
-      if (Object.hasOwn(local.sent, card.id)) line += ' (sent, waiting for you to resolve)'
+      if (isAnswered(local, card.id)) line += ' (sent, waiting for you to resolve)'
+      else if (Object.hasOwn(local.sent, card.id)) line += ' (the user sent a thought only; the card is still open for their choice)'
       return line
     })
     sections.push(['Open cards:', ...lines].join('\n'))
@@ -58,5 +66,7 @@ export function summary(plan: Plan, local: Local): string {
     sections.push(['Skipped entries:', ...lines].join('\n'))
   }
 
-  return sections.length === 0 ? 'No plan yet in plan/log.jsonl.' : sections.join('\n')
+  const head = STORAGE[plan.storage]
+  if (sections.length === 0) return `${head}\n${plan.storage === 'local' ? 'No plan yet.' : 'No plan yet in plan/log.jsonl.'}`
+  return [head, ...sections].join('\n')
 }

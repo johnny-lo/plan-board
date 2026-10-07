@@ -155,8 +155,69 @@ test('summary_lists_items_cards_and_edits', async () => {
   expect(out).toContain('2. [B] next one — next')
 })
 
-test('summary_of_empty_plan', () => {
-  expect(summary(emptyPlan(), emptyLocal)).toBe('No plan yet in plan/log.jsonl.')
+test('summary_of_empty_plan', async () => {
+  expect(summary(emptyPlan(), emptyLocal)).toBe('Plan storage: repo (plan/log.jsonl)\nNo plan yet in plan/log.jsonl.')
+  expect(summary(await replay('', 'local'), emptyLocal)).toBe(
+    'Plan storage: this machine only (run /plan init to keep it in the repo)\nNo plan yet.',
+  )
+})
+
+test('summary_starts_with_the_storage_line', async () => {
+  const text = await logText([entry('item.add', { item: item('A', 'Setup') }), card('c1')])
+  const repo = summary(await replay(text), emptyLocal)
+  expect(repo.split('\n')[0]).toBe('Plan storage: repo (plan/log.jsonl)')
+  expect(repo).toContain('1. [A] Setup')
+  const local = summary(await replay(text, 'local'), emptyLocal)
+  expect(local.split('\n')[0]).toBe('Plan storage: this machine only (run /plan init to keep it in the repo)')
+  expect(local).toContain('1. [A] Setup')
+  expect(local).toContain('Open cards:')
+})
+
+test('summary_lists_docs_after_the_goal', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A', 'Setup', 'it works') }),
+      entry('item.add', { item: item('B', 'Later') }),
+      entry('item.link', { item: 'A', doc: 'docs/superpowers/specs/setup.md' }),
+      entry('item.link', { item: 'A', doc: 'docs/superpowers/plans/setup.md' }),
+    ]),
+  )
+  const out = summary(plan, emptyLocal)
+  const line = out.split('\n').find(l => l.includes('[A]')) as string
+  expect(line.indexOf('goal: it works')).toBeGreaterThan(-1)
+  expect(line.indexOf('docs: docs/superpowers/specs/setup.md, docs/superpowers/plans/setup.md')).toBeGreaterThan(line.indexOf('goal: it works'))
+  expect(out.split('\n').find(l => l.includes('[B]'))).not.toContain('docs')
+})
+
+test('summary_keeps_the_raw_assignee', async () => {
+  const ulid = '01jf0e1d2c3b4a59687f0e1d2c'
+  const plan = await replay(
+    await logText([entry('item.add', { item: item('A') }), step('A', 's1'), entry('step.assign', { step: 's1', to: ulid })]),
+  )
+  expect(summary(plan, emptyLocal)).toContain(`assigned to ${ulid}`)
+})
+
+test('a_thought_only_card_still_counts_as_waiting', async () => {
+  const plan = await replay(await logText([entry('item.add', { item: item('A') }), card('c1'), card('c2'), card('c3')]))
+  const local: Local = {
+    ...emptyLocal,
+    sent: {
+      c1: { draft: 'let me think', at: 1 },
+      c2: { choice: 'a', at: 1 },
+      c3: { isDismissed: true, at: 1 },
+    },
+  }
+  expect(bandCounts(plan, local).waiting).toBe(1)
+  expect(bandCounts(plan, { ...emptyLocal, sent: { c1: { draft: 'x', at: 1 } } }).waiting).toBe(3)
+  const told = summary(plan, local)
+  expect(told).toContain('[c1] q-c1 {question} (the user sent a thought only')
+  expect(told).toContain('[c2] q-c2 {question} (sent, waiting for you to resolve)')
+})
+
+test('guide_asks_before_plan_init_and_links_superpowers_documents', () => {
+  expect(GUIDE).toContain('/plan init')
+  expect(GUIDE).toContain('add_decision')
+  expect(GUIDE).toContain('superpowers')
 })
 
 test('guide_names_every_tool', () => {
