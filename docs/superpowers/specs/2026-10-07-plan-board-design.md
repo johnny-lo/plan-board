@@ -310,3 +310,21 @@
 - 不同電腦的時鐘有誤差時，幾乎同時寫的紀錄可能排錯順序。
 - 被刪掉的紀錄行查不出來。
 - 檢查碼擋不住刻意照格式偽造的人；它的用途是發現不小心的直接改檔。
+
+## 13. 換裝前的修正（2026-10-08 加）
+
+使用者在換裝前選的三件事：本機模式（5.1a）、修掉審查留下的 4 個小問題、和 superpowers 的 spec／plan 連起來。
+
+### 13.1 和 superpowers 的 spec／plan 連起來
+
+- 項目多一個欄位 `docs: string[]`（repo 根目錄起算的相對路徑，例如 `docs/superpowers/plans/2026-10-07-plan-board.md`）。
+- 新的紀錄種類 `item.link`，`data: { item, doc }`：把一個路徑加進那個項目的 `docs`（已經有就不重複加）。它**不算**項目層的改動（不改一句話、目標或順序），所以不用使用者點頭，由 `update_step` 的新 op `{action: 'link', item, doc}` 寫入，照常記錄原因。
+- 總表展開項目時，在「做完的樣子」下面每個路徑一行：`文件：{path}`。
+- 給 AI 的說明加上：替某個項目寫 superpowers 的 spec 或 plan 時，用 `link` 把檔案連到項目；plan 寫好後，把每個 task 加成這個項目的一個步驟（標題照抄）；勾掉一個 task 時，把對應的步驟標成做完。superpowers 管「怎麼做」，plan-board 管「做到哪、為什麼變」。
+
+### 13.2 審查留下的 4 個小問題
+
+1. **只寫想法送出的卡要能繼續回答**：沒有選項、只有想法的卡，送出後不變灰；卡片照常顯示選項和輸入框，並多一行 `你的想法：{draft}`；它在輸入框上方一列和 `bandCounts` 裡仍算「等你決定」。有選項或略過的卡才變灰、顯示「已送出，等 AI 結案」。
+2. **派給 Thoth 任務時不顯示 id**：步驟的派給對象看起來像 id（26 個字元的 ULID，或 8 個以上的十六進位字元）時，畫面上改成 `派給 Thoth 任務`（英文 `assigned to a Thoth task`），不顯示原字串；給 AI 的摘要照舊顯示原字串。
+3. **每個窗格測試都跑 terminal 和 desktop 兩種畫面**（目前 `staged_choice_auto_sends_after_turn_end` 只跑 terminal）。
+4. **改名的紀錄顯示舊名字**：`replay` 套用 `item.edit`（有改 `title` 時）和 `step.edit` 時，把改之前的名字記在 `plan.previousNames[紀錄 id]`；紀錄的文字寫成 `改名「{舊}」→「{新}」`。
