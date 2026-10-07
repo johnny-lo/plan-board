@@ -45,7 +45,7 @@ export function summary(plan: Plan, local: Local): string {
     const lines = cards.map(card => {
       let line = `- [${card.id}] ${card.question} {${card.type}}`
       if (card.blocking) line += ' (blocking)'
-      if (local.sent[card.id] !== undefined) line += ' (sent, waiting for you to resolve)'
+      if (Object.hasOwn(local.sent, card.id)) line += ' (sent, waiting for you to resolve)'
       return line
     })
     sections.push(['Open cards:', ...lines].join('\n'))

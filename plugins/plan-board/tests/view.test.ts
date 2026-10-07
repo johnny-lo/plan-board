@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { sha16 } from '../hooks/checksum.ts'
 import { GUIDE, summary } from '../hooks/guide.ts'
 import { emptyPlan, replay } from '../hooks/replay.ts'
 import { bandCounts, blockedSteps, cardPosition, historyOf, itemStates, openCards, recentFor } from '../hooks/view.ts'
@@ -162,4 +163,34 @@ test('guide_names_every_tool', () => {
   for (const name of ['propose_change', 'apply_change', 'update_step', 'add_decision', 'resolve_decision', 'resolve_direct_edit', 'plan/']) {
     expect(GUIDE).toContain(name)
   }
+})
+
+test('prototype_names_are_plain_ids', async () => {
+  const base = await logText([entry('item.add', { item: item('A') })])
+  const bad = JSON.stringify({
+    id: 'eeeeeeeeeeee',
+    at: '2026-10-07T00:00:00.500Z',
+    kind: 'item.add',
+    why: 'x',
+    basis: { type: 'ai' },
+    data: { item: item('__proto__') },
+  })
+  const rest = await logText([
+    entry('edit.keep', { lines: [await sha16(bad)], summary: 'ok' }),
+    card('toString'),
+  ])
+  const plan = await replay(base + bad + '\n' + rest)
+  expect(plan.flagged).toEqual([])
+  expect(plan.order).toEqual(['__proto__', 'A'])
+  const states = itemStates(plan)
+  expect(states['__proto__']).toBe('next')
+  expect(states.A).toBe('later')
+  expect(Object.keys(states).length).toBe(2)
+  expect(summary(plan, emptyLocal)).toContain('1. [__proto__] __proto__ — next')
+
+  expect(bandCounts(plan, emptyLocal).waiting).toBe(1)
+  expect(summary(plan, emptyLocal)).not.toContain('(sent, waiting for you to resolve)')
+  const sent: Local = { ...emptyLocal, sent: { toString: { choice: '1', at: 1 } } }
+  expect(bandCounts(plan, sent).waiting).toBe(0)
+  expect(summary(plan, sent)).toContain('(sent, waiting for you to resolve)')
 })
