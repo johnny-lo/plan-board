@@ -208,6 +208,20 @@ function touchedAfter(entry: Entry): string[] {
   }
 }
 
+const isObject = (v: unknown): boolean => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+function wellFormed(entry: Entry): boolean {
+  const e = entry as unknown as Record<string, unknown>
+  return (
+    typeof e.id === 'string' &&
+    typeof e.at === 'string' &&
+    typeof e.kind === 'string' &&
+    typeof e.why === 'string' &&
+    isObject(e.basis) &&
+    isObject(e.data)
+  )
+}
+
 export async function replay(text: string): Promise<Plan> {
   const plan = emptyPlan()
   const body = text.startsWith('﻿') ? text.slice(1) : text
@@ -234,14 +248,27 @@ export async function replay(text: string): Promise<Plan> {
         continue
       }
     }
-    if (entry === null || typeof entry.id !== 'string' || seen.has(entry.id)) continue
+    if (entry === null) continue
+    if (!wellFormed(entry)) {
+      plan.skipped.push({ entry, reason: 'malformed entry' })
+      continue
+    }
+    if (seen.has(entry.id)) continue
     seen.add(entry.id)
     entries.push(entry)
   }
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   for (const entry of entries) {
-    const before = touchedBefore(plan, entry)
-    const reason = applyEntry(plan, entry)
+    const snapshot = structuredClone(plan)
+    let before: string[] = []
+    let reason: string | null
+    try {
+      before = touchedBefore(plan, entry)
+      reason = applyEntry(plan, entry)
+    } catch {
+      Object.assign(plan, snapshot)
+      reason = 'malformed entry: could not apply'
+    }
     if (reason !== null) {
       plan.skipped.push({ entry, reason })
       continue

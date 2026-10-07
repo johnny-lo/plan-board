@@ -85,3 +85,14 @@ test('edit_drop_hides_a_line_for_good', async () => {
   expect(plan.flagged).toEqual([])
   expect(plan.applied.some((e) => e.kind === 'edit.drop')).toBe(true)
 })
+
+test('kept_malformed_line_is_skipped', async () => {
+  const base = await logText([entry('item.add', { item: item('A') })])
+  const bad = JSON.stringify({ id: 'ffffffffffff', at: '2026-10-07T01:00:00.000Z', kind: 'step.status', why: 'x', basis: { type: 'ai' } })
+  const keep = await logText([entry('edit.keep', { lines: [await sha16(bad)], summary: 'ok' })])
+  const plan = await replay(base + bad + '\n' + keep)
+  expect(plan.skipped.length).toBe(1)
+  expect(plan.skipped[0].reason).toContain('malformed')
+  expect(plan.items.A).toBeDefined()
+  expect(plan.applied.some((e) => e.kind === 'edit.keep')).toBe(true)
+})
