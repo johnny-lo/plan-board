@@ -55,3 +55,9 @@ export type ItemState = 'done' | 'doing' | 'next' | 'later'
 export type Pick = { choice?: string; draft?: string; isDismissed?: boolean; at: number }
 /** This machine's pane state for one worktree, kept in $.store. */
 export type Local = { staged: Record<string, Pick>; sent: Record<string, Pick>; expanded: string[]; view: 'overview' | 'cards' }
+
+declare module 'claude-code' {
+  interface PluginState {
+    'plan-board': { root: string; plan: Plan; local: Local }
+  }
+}
