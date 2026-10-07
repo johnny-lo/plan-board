@@ -1,8 +1,21 @@
 import type { Entry, Plan, Step } from '../types'
 import { checkLine } from './checksum.ts'
 
+/** A map without a prototype, so ids such as 'constructor' or '__proto__' are plain keys. */
+const table = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
+
 export function emptyPlan(): Plan {
-  return { order: [], items: {}, steps: {}, cards: {}, applied: [], itemLog: {}, names: {}, flagged: [], skipped: [] }
+  return {
+    order: [],
+    items: table(),
+    steps: table(),
+    cards: table(),
+    applied: [],
+    itemLog: table(),
+    names: table(),
+    flagged: [],
+    skipped: [],
+  }
 }
 
 type Spec = { id: string; title: string; goal: string }
@@ -27,8 +40,70 @@ function detach(plan: Plan, stepId: string): void {
   steps.splice(steps.indexOf(stepId), 1)
 }
 
-/** Applies one entry to the plan. Returns null when applied, otherwise why it was skipped. */
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isString = (v: unknown): v is string => typeof v === 'string'
+const isOptString = (v: unknown): boolean => v === undefined || isString(v)
+const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString)
+const isItemSpec = (v: unknown): boolean => isObject(v) && isString(v.id) && isString(v.title) && isString(v.goal)
+
+function isCardSpec(v: unknown): boolean {
+  return (
+    isObject(v) &&
+    isString(v.id) &&
+    (v.type === 'question' || v.type === 'proposal') &&
+    isOptString(v.item) &&
+    isOptString(v.step) &&
+    isString(v.question) &&
+    isString(v.why) &&
+    Array.isArray(v.options) &&
+    v.options.every((o) => isObject(o) && isString(o.label) && isString(o.effect))
+  )
+}
+
+/** Whether the entry's data has the shape its kind needs; unknown kinds pass and are skipped later. */
+function hasValidData(entry: Entry): boolean {
+  const d = entry.data as unknown
+  if (!isObject(d)) return false
+  switch (entry.kind) {
+    case 'item.add':
+      return isItemSpec(d.item) && isOptString(d.before)
+    case 'item.remove':
+      return isString(d.item)
+    case 'item.split':
+      return isString(d.item) && Array.isArray(d.into) && d.into.every(isItemSpec)
+    case 'item.merge':
+      return isStrings(d.items) && isItemSpec(d.into)
+    case 'item.edit':
+      return isString(d.item) && isOptString(d.title) && isOptString(d.goal)
+    case 'item.reorder':
+      return isStrings(d.order)
+    case 'step.add':
+      return isString(d.item) && isObject(d.step) && isString(d.step.id) && isString(d.step.title) && isOptString(d.after)
+    case 'step.edit':
+      return isString(d.step) && isString(d.title)
+    case 'step.remove':
+      return isString(d.step)
+    case 'step.move':
+      return isString(d.step) && isString(d.item) && isOptString(d.after)
+    case 'step.assign':
+      return isString(d.step) && isString(d.to)
+    case 'step.status':
+      return isString(d.step) && (d.status === 'todo' || d.status === 'doing' || d.status === 'done') && isOptString(d.result)
+    case 'card.open':
+      return isCardSpec(d.card)
+    case 'card.resolve':
+      return isString(d.card) && isString(d.outcome) && isOptString(d.choice)
+    case 'edit.keep':
+    case 'edit.drop':
+      return isStrings(d.lines) && isString(d.summary)
+    default:
+      return true
+  }
+}
+
+/** Applies one entry to the plan. Returns null when applied, otherwise why it was skipped; a skipped entry leaves the plan untouched. */
 export function applyEntry(plan: Plan, entry: Entry): string | null {
+  if (!hasValidData(entry)) return `malformed entry: bad data for ${entry.kind}`
   switch (entry.kind) {
     case 'item.add': {
       const { item, before } = entry.data
@@ -150,6 +225,25 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       else target.evidence = { result }
       return null
     }
+    case 'card.open': {
+      const { card } = entry.data
+      if (has(plan.cards, card.id)) return `card exists: ${card.id}`
+      plan.cards[card.id] = { ...card, openedAt: entry.at }
+      plan.names[card.id] = card.question
+      return null
+    }
+    case 'card.resolve': {
+      const { card, outcome, choice } = entry.data
+      if (!has(plan.cards, card)) return `unknown card: ${card}`
+      if (plan.cards[card].resolved) return `card already resolved: ${card}`
+      const resolved: { outcome: string; choice?: string; at: string } = { outcome, at: entry.at }
+      if (choice !== undefined) resolved.choice = choice
+      plan.cards[card].resolved = resolved
+      return null
+    }
+    case 'edit.keep':
+    case 'edit.drop':
+      return null
     default:
       return `unsupported kind: ${entry.kind}`
   }
@@ -159,6 +253,10 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
 function touchedBefore(plan: Plan, entry: Entry): string[] {
   const d = entry.data as Record<string, unknown>
   if (typeof d.step === 'string' && has(plan.steps, d.step)) return [plan.steps[d.step].item]
+  if (typeof d.card === 'string' && has(plan.cards, d.card)) {
+    const item = plan.cards[d.card].item
+    if (item !== undefined) return [item]
+  }
   return []
 }
 
@@ -178,27 +276,69 @@ function touchedAfter(entry: Entry): string[] {
       return [entry.data.item]
     case 'step.move':
       return [entry.data.item]
+    case 'card.open':
+      return entry.data.card.item !== undefined ? [entry.data.card.item] : []
     default:
       return []
   }
 }
 
+function wellFormed(entry: Entry): boolean {
+  const e = entry as unknown as Record<string, unknown>
+  return (
+    typeof e.id === 'string' &&
+    typeof e.at === 'string' &&
+    typeof e.kind === 'string' &&
+    typeof e.why === 'string' &&
+    isObject(e.basis) &&
+    isObject(e.data)
+  )
+}
+
 export async function replay(text: string): Promise<Plan> {
   const plan = emptyPlan()
   const body = text.startsWith('﻿') ? text.slice(1) : text
-  const seen = new Set<string>()
-  const entries: Entry[] = []
+  const checked: { raw: string; entry: Entry | null; isSealed: boolean; hash: string }[] = []
+  const keep = new Set<string>()
+  const drop = new Set<string>()
   for (const raw of body.split(/\r?\n/)) {
     if (raw === '') continue
-    const { entry, isSealed } = await checkLine(raw)
-    if (entry === null || !isSealed || seen.has(entry.id)) continue
+    const result = await checkLine(raw)
+    checked.push({ raw: raw.endsWith('\r') ? raw.slice(0, -1) : raw, ...result })
+    const { entry } = result
+    if (entry === null || !result.isSealed || (entry.kind !== 'edit.keep' && entry.kind !== 'edit.drop')) continue
+    if (wellFormed(entry) && hasValidData(entry)) for (const h of entry.data.lines) (entry.kind === 'edit.keep' ? keep : drop).add(h)
+  }
+  const seen = new Set<string>()
+  const entries: Entry[] = []
+  for (const { raw, entry, isSealed, hash } of checked) {
+    if (!isSealed) {
+      if (drop.has(hash)) continue
+      if (entry === null || !keep.has(hash)) {
+        plan.flagged.push({ raw, hash, entry })
+        continue
+      }
+    }
+    if (entry === null) continue
+    if (!wellFormed(entry)) {
+      plan.skipped.push({ entry, reason: 'malformed entry' })
+      continue
+    }
+    if (seen.has(entry.id)) continue
     seen.add(entry.id)
     entries.push(entry)
   }
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   for (const entry of entries) {
-    const before = touchedBefore(plan, entry)
-    const reason = applyEntry(plan, entry)
+    let before: string[] = []
+    let reason: string | null
+    try {
+      before = touchedBefore(plan, entry)
+      reason = applyEntry(plan, entry)
+    } catch {
+      // Last resort: applyEntry checks shapes first, so this should not happen.
+      reason = 'malformed entry: could not apply'
+    }
     if (reason !== null) {
       plan.skipped.push({ entry, reason })
       continue
