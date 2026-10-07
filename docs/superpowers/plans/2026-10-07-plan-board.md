@@ -27,7 +27,7 @@
 - `$.fs.read` 最多讀 4 MiB，紀錄檔超過就讀不了，接受這個限制。
 - 外掛和工具都不 commit、不 push。本計畫不建立 GitHub repo，也不 push。
 - 授權 `MIT OR Apache-2.0`。
-- 每個 commit 訊息的最後一行：`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`。
+- commit 訊息照執行者所在環境的 attribution 規則。
 
 **驗證指令**（在 repo 根目錄執行）：
 
