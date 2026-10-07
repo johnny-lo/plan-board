@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { sha16 } from '../hooks/checksum.ts'
-import { replay } from '../hooks/replay.ts'
+import { applyEntry, replay } from '../hooks/replay.ts'
 import { entry, logText } from './fixtures.ts'
 
 const item = (id: string, title = id, goal = `${id} goal`) => ({ id, title, goal })
@@ -95,4 +95,68 @@ test('kept_malformed_line_is_skipped', async () => {
   expect(plan.skipped[0].reason).toContain('malformed')
   expect(plan.items.A).toBeDefined()
   expect(plan.applied.some((e) => e.kind === 'edit.keep')).toBe(true)
+})
+
+test('malformed_data_is_skipped_with_plan_untouched', async () => {
+  const plan = await replay(
+    await logText([entry('item.add', { item: item('A') }), entry('step.add', { item: 'A', step: { id: 's1', title: 'one' } })]),
+  )
+  const before = JSON.stringify(plan)
+  const bad = [
+    entry('item.add', { item: null }),
+    entry('item.split', { item: 'A', into: [item('X'), null] }),
+    entry('item.merge', { items: ['A', 'A2'], into: 'Z' }),
+    entry('step.add', { item: 'A' }),
+    entry('step.status', { step: 's1', status: 'finished' }),
+    entry('card.open', { card: { id: 'c9' } }),
+    entry('card.resolve', { card: 'c9' }),
+    entry('edit.keep', { lines: 'abc' }),
+  ]
+  for (const e of bad) expect(applyEntry(plan, e)).toContain('malformed')
+  expect(JSON.stringify(plan)).toBe(before)
+})
+
+test('pass_one_ignores_malformed_edit_data', async () => {
+  const { base, bad, hash } = await tampered()
+  const odd = await logText([entry('edit.keep', null), entry('edit.keep', { lines: [{ h: hash }], summary: 'x' })])
+  const plan = await replay(base + bad + '\n' + odd)
+  expect(plan.items.B).toBeUndefined()
+  expect(plan.flagged.length).toBe(1)
+  expect(plan.skipped.every((s) => s.reason.includes('malformed'))).toBe(true)
+})
+
+test('prototype_ids_are_plain_ids', async () => {
+  const base = await logText([entry('item.add', { item: item('A') })])
+  const bad = JSON.stringify({
+    id: 'eeeeeeeeeeee',
+    at: '2026-10-07T00:00:00.500Z',
+    kind: 'item.add',
+    why: 'x',
+    basis: { type: 'ai' },
+    data: { item: item('constructor') },
+  })
+  const rest = await logText([
+    entry('step.add', { item: 'constructor', step: { id: '__proto__', title: 'proto' } }),
+    entry('edit.keep', { lines: [await sha16(bad)], summary: 'ok' }),
+  ])
+  const plan = await replay(base + bad + '\n' + rest)
+  expect(plan.flagged).toEqual([])
+  expect(plan.items.constructor.title).toBe('constructor')
+  expect(plan.items.constructor.steps).toEqual(['__proto__'])
+  expect(plan.steps.__proto__.title).toBe('proto')
+  expect(plan.itemLog.constructor.length).toBe(2)
+  expect(plan.names.constructor).toBe('constructor')
+})
+
+test('replays_3000_entries_quickly', async () => {
+  const entries = []
+  for (let i = 0; i < 30; i++) entries.push(entry('item.add', { item: item(`I${i}`) }))
+  for (let i = 0; i < 1000; i++) entries.push(entry('step.add', { item: `I${i % 30}`, step: { id: `s${i}`, title: `step ${i}` } }))
+  for (let i = 0; i < 1970; i++) entries.push(entry('step.status', { step: `s${i % 1000}`, status: i % 2 ? 'doing' : 'done', result: 'ok' }))
+  const text = await logText(entries)
+  const start = Date.now()
+  const plan = await replay(text)
+  const ms = Date.now() - start
+  expect(plan.applied.length).toBe(3000)
+  expect(ms).toBeLessThan(4000)
 })
