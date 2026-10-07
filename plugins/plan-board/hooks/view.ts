@@ -1,7 +1,7 @@
 import type { Card, Entry, Item, ItemState, Local, Plan, Step } from '../types'
 
 export function itemStates(plan: Plan): Record<string, ItemState> {
-  const states: Record<string, ItemState> = {}
+  const states = Object.create(null) as Record<string, ItemState>
   let hasNext = false
   for (const id of plan.order) {
     const item = plan.items[id]
@@ -62,7 +62,7 @@ export function bandCounts(plan: Plan, local: Local): { doing: number; waiting: 
   const states = itemStates(plan)
   return {
     doing: Object.values(states).filter(state => state === 'doing').length,
-    waiting: openCards(plan).filter(card => local.sent[card.id] === undefined).length,
+    waiting: openCards(plan).filter(card => !Object.hasOwn(local.sent, card.id)).length,
     isEdited: plan.flagged.length > 0,
   }
 }
