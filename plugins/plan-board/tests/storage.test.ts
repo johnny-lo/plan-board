@@ -242,6 +242,179 @@ test('plan_init_answers_in_zh_tw', ZH, async ($, on) => {
   expect(again.text).toContain('什麼都沒改')
 })
 
+test('local_write_follows_a_plan_init_that_ran_after_the_read', async ($, on) => {
+  const w = world(on)
+  const moved = await logText([entry('item.add', { item: item('B', 'Moved') })])
+  w.store.set(STORED, await logText([entry('item.add', { item: item('A', 'Stored') })]))
+  await $.session.start({ cwd: '/repo' })
+
+  // Another session's /plan init lands after this call has read the plan, just before the write.
+  let gets = 0
+  w.onStoreGet = key => {
+    if (key !== STORED || ++gets !== 2) return
+    w.files[LOG] = moved
+    w.store.delete(STORED)
+  }
+  const res = await propose($)
+  expect(res.deny).toBeUndefined()
+  const lines = w.files[LOG].split('\n').filter(Boolean)
+  expect(w.files[LOG].startsWith(moved)).toBe(true)
+  expect(lines.length).toBe(2)
+  expect(JSON.parse(lines[1]).kind).toBe('card.open')
+  expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
+  expect(w.store.has(STORED)).toBe(false)
+})
+
+test('local_write_checks_the_mode_again_on_every_attempt', async ($, on) => {
+  const w = world(on)
+  const seen = await logText([entry('item.add', { item: item('A', 'Stored') })])
+  const other = await logText([entry('item.add', { item: item('C', 'Other') })])
+  w.store.set(STORED, seen)
+  await $.session.start({ cwd: '/repo' })
+
+  // The first attempt sees the stored log change; plan/log.jsonl only appears before the second one.
+  let gets = 0
+  w.onStoreGet = key => {
+    if (key !== STORED) return
+    gets += 1
+    if (gets === 3) w.store.set(STORED, seen + other)
+    if (gets === 4) {
+      w.files[LOG] = seen + other
+      w.store.delete(STORED)
+    }
+  }
+  const res = await propose($)
+  expect(res.deny).toBeUndefined()
+  const lines = w.files[LOG].split('\n').filter(Boolean)
+  expect(w.files[LOG].startsWith(seen + other)).toBe(true)
+  expect(lines.length).toBe(3)
+  expect(JSON.parse(lines[2]).kind).toBe('card.open')
+  expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
+  expect(w.store.has(STORED)).toBe(false)
+})
+
+test('plan_init_adds_the_lines_the_local_log_gained_before_deleting_it', async ($, on) => {
+  const w = world(on)
+  const [one, two, three, four] = await Promise.all(
+    ['One', 'Two', 'Three', 'Four'].map(title => logText([entry('item.add', { item: item(title, title) })])),
+  )
+  w.store.set(STORED, one + two)
+  await $.session.start({ cwd: '/repo' })
+
+  // Between the copy and the delete the local log gains two lines, and plan/log.jsonl gains one of them.
+  let gets = 0
+  w.onStoreGet = key => {
+    if (key !== STORED || ++gets !== 2) return
+    w.store.set(STORED, one + two + three + four)
+    w.files[LOG] += four
+  }
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  expect(w.files[LOG]).toBe(one + two + four + three)
+  expect(w.store.has(STORED)).toBe(false)
+  expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
+  expect(ran.text).toContain('moved into the repo')
+  expect(ran.text).not.toMatch(ID)
+  expect(ran.text).not.toContain('\n')
+})
+
+// Another session keeps writing to the local log, so each of the 3 checks after the copy finds it different.
+async function initWhileStoredLogKeepsChanging($: Engine, w: World): Promise<{ lines: string[]; text: string }> {
+  const lines = await Promise.all(
+    ['One', 'Two', 'Three', 'Four', 'Five'].map(title => logText([entry('item.add', { item: item(title, title) })])),
+  )
+  w.store.set(STORED, lines[0])
+  await $.session.start({ cwd: '/repo' })
+  let gets = 0
+  w.onStoreGet = key => {
+    if (key !== STORED) return
+    gets += 1
+    if (gets >= 2 && gets <= 4) w.store.set(STORED, lines.slice(0, gets).join(''))
+  }
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  return { lines, text: ran.text as string }
+}
+
+test('plan_init_keeps_the_local_log_while_another_session_keeps_writing', async ($, on) => {
+  const w = world(on)
+  const { lines, text } = await initWhileStoredLogKeepsChanging($, w)
+  expect(w.store.get(STORED)).toBe(lines.slice(0, 4).join(''))
+  expect(w.files[LOG]).toBe(lines.slice(0, 4).join(''))
+  expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
+  expect(text).toContain('moved into plan/log.jsonl')
+  expect(text).toContain('another session kept writing')
+  expect(text).toContain('kept')
+  expect(text).not.toMatch(ID)
+  expect(text).not.toContain('\n')
+})
+
+test('plan_init_keeps_the_local_log_while_another_session_keeps_writing_in_zh_tw', ZH, async ($, on) => {
+  const w = world(on)
+  const { lines, text } = await initWhileStoredLogKeepsChanging($, w)
+  expect(w.store.get(STORED)).toBe(lines.slice(0, 4).join(''))
+  expect(w.files[LOG]).toBe(lines.slice(0, 4).join(''))
+  expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
+  expect(text).toContain('計畫已搬進 plan/log.jsonl')
+  expect(text).toContain('別的 session 一直在寫本機那份')
+  expect(text).toContain('先留著沒刪')
+  expect(text).not.toMatch(ID)
+  expect(text).not.toContain('\n')
+})
+
+async function initThatCannotWrite($: Engine, w: World): Promise<string> {
+  w.store.set(STORED, await logText([entry('item.add', { item: item('A', 'Stored') })]))
+  const before = storedText(w)
+  await $.session.start({ cwd: '/repo' })
+  w.failWrites = 'log.jsonl'
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  expect(storedText(w)).toBe(before)
+  expect(LOG in w.files).toBe(false)
+  expect(ran.text).not.toContain('read-only')
+  expect(ran.text).not.toContain('Could not create')
+  expect(ran.text).not.toMatch(ID)
+  expect(ran.text).not.toContain('\n')
+  return ran.text as string
+}
+
+test('plan_init_says_nothing_changed_when_plan_log_cannot_be_written', async ($, on) => {
+  const text = await initThatCannotWrite($, world(on))
+  expect(text).toContain('Could not move the plan')
+  expect(text).toContain('nothing was changed')
+  expect(text).toContain('still on this machine')
+})
+
+test('plan_init_says_nothing_changed_when_plan_log_cannot_be_written_in_zh_tw', ZH, async ($, on) => {
+  const text = await initThatCannotWrite($, world(on))
+  expect(text).toContain('什麼都沒改')
+  expect(text).toContain('計畫還在這台電腦')
+})
+
+async function initWhoseDeleteFails($: Engine, w: World): Promise<string> {
+  const stored = await logText([entry('item.add', { item: item('A', 'Stored') })])
+  w.store.set(STORED, stored)
+  await $.session.start({ cwd: '/repo' })
+  w.failDeletes = true
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  expect(w.files[LOG]).toBe(stored)
+  expect(storedText(w)).toBe(stored)
+  expect(ran.text).not.toContain('locked')
+  expect(ran.text).not.toContain('Could not create')
+  expect(ran.text).not.toMatch(ID)
+  expect(ran.text).not.toContain('\n')
+  return ran.text as string
+}
+
+test('plan_init_says_the_local_copy_is_still_there_when_a_later_step_fails', async ($, on) => {
+  const text = await initWhoseDeleteFails($, world(on))
+  expect(text).toContain('moved into plan/log.jsonl')
+  expect(text).toContain('copy on this machine is still there')
+})
+
+test('plan_init_says_the_local_copy_is_still_there_when_a_later_step_fails_in_zh_tw', ZH, async ($, on) => {
+  const text = await initWhoseDeleteFails($, world(on))
+  expect(text).toContain('計畫已搬進 plan/log.jsonl')
+  expect(text).toContain('本機那份還留著')
+})
+
 test('plain_plan_still_opens_the_pane', async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
