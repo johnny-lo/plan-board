@@ -86,7 +86,7 @@
 - spec：`docs/superpowers/specs/2026-10-07-plan-board-design.md`（之後加了 5.1a 本機模式、13 換裝前修正）。計畫：`docs/superpowers/plans/2026-10-07-plan-board.md`。
 - 實作用 Thoth 派工（使用者選的），repo 已 `thoth init`，四條核准檢查：plugin-test、plugin-validate、marketplace-validate、git-merge-test。
 - Task 1–9 和換裝前修正都已合併進 main：100 個外掛測試、git 合併測試 2 個全過。
-- 還沒做：Task 10（在 Legion 安裝、處理舊 mod 的 2 張卡、移除舊 mod）。
+- Task 10 已完成（2026-10-10）：plan-board 裝在 Legion（user scope、`zh-TW`），舊 mod 搬到 `~/.claude/mods-disabled/decisions`，這個 repo 已 `/plan init`。細節記在計畫文件 Task 10。
 - 試用紀錄：Thoth repo `docs/trial/` 第 69–76 件，還沒 commit。
 
 ## 之後再修（審查留下的小問題）
