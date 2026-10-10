@@ -318,7 +318,7 @@ test('plan_init_adds_the_lines_the_local_log_gained_before_deleting_it', async (
 })
 
 // Another session keeps writing to the local log, so each of the 3 checks after the copy finds it different.
-async function initWhileStoredLogKeepsChanging($: Engine, w: World): Promise<{ lines: string[]; text: string }> {
+async function initWhileStoredLogKeepsChanging($: Engine, w: World, before: () => void = () => {}): Promise<{ lines: string[]; text: string }> {
   const lines = await Promise.all(
     ['One', 'Two', 'Three', 'Four', 'Five'].map(title => logText([entry('item.add', { item: item(title, title) })])),
   )
@@ -330,6 +330,7 @@ async function initWhileStoredLogKeepsChanging($: Engine, w: World): Promise<{ l
     gets += 1
     if (gets >= 2 && gets <= 4) w.store.set(STORED, lines.slice(0, gets).join(''))
   }
+  before()
   const ran = await $.command.run({ command: 'plan', args: 'init' })
   return { lines, text: ran.text as string }
 }
@@ -356,6 +357,52 @@ test('plan_init_keeps_the_local_log_while_another_session_keeps_writing_in_zh_tw
   expect(text).toContain('計畫已搬進 plan/log.jsonl')
   expect(text).toContain('別的 session 一直在寫本機那份')
   expect(text).toContain('先留著沒刪')
+  expect(text).not.toMatch(ID)
+  expect(text).not.toContain('\n')
+})
+
+test('plan_init_keeps_a_line_that_lands_in_plan_log_between_its_merge_read_and_write', async ($, on) => {
+  const w = world(on)
+  const [one, two, three] = await Promise.all(
+    ['One', 'Two', 'Three'].map(title => logText([entry('item.add', { item: item(title, title) })])),
+  )
+  w.store.set(STORED, one)
+  await $.session.start({ cwd: '/repo' })
+
+  // The local log gains a line after the copy; another session appends to plan/log.jsonl right after init reads it to merge.
+  let gets = 0
+  w.onStoreGet = key => {
+    if (key !== STORED || ++gets !== 2) return
+    w.store.set(STORED, one + two)
+    w.onRead = path => {
+      if (path !== LOG) return
+      w.onRead = null
+      w.files[LOG] += three
+    }
+  }
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  expect(w.files[LOG]).toBe(one + three + two)
+  expect(w.store.has(STORED)).toBe(false)
+  expect(ran.text).toContain('moved into the repo')
+})
+
+test('plan_init_tells_about_gitattributes_when_it_keeps_the_local_log_and_that_fails_too', async ($, on) => {
+  const w = world(on)
+  const { lines, text } = await initWhileStoredLogKeepsChanging($, w, () => { w.failWrites = '.gitattributes' })
+  expect(w.store.get(STORED)).toBe(lines.slice(0, 4).join(''))
+  expect(w.files[LOG]).toBe(lines.slice(0, 4).join(''))
+  expect(ATTRIBUTES in w.files).toBe(false)
+  expect(text).toContain('another session kept writing')
+  expect(text).toContain('plan/log.jsonl merge=union')
+  expect(text).not.toMatch(ID)
+  expect(text).not.toContain('\n')
+})
+
+test('plan_init_tells_about_gitattributes_when_it_keeps_the_local_log_and_that_fails_too_in_zh_tw', ZH, async ($, on) => {
+  const w = world(on)
+  const { text } = await initWhileStoredLogKeepsChanging($, w, () => { w.failWrites = '.gitattributes' })
+  expect(text).toContain('別的 session 一直在寫本機那份')
+  expect(text).toContain('plan/log.jsonl merge=union')
   expect(text).not.toMatch(ID)
   expect(text).not.toContain('\n')
 })

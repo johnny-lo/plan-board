@@ -45,6 +45,7 @@ const INIT_REPLY = {
   exists: 'initAlready',
   'no-attributes': 'initNoAttributes',
   kept: 'initKept',
+  'kept-no-attributes': 'initKeptNoAttributes',
   failed: 'initFailed',
   half: 'initHalf',
 } as const
