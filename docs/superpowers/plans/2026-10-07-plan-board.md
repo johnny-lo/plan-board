@@ -589,6 +589,8 @@ test('i18n_tables_have_the_same_keys')
 
 用 Thoth 派工。行為照 spec 14，測試先寫。
 
-- [ ] **Step 1**：本機寫入每次嘗試前重新判斷模式，`plan/log.jsonl` 出現了就改寫進 repo（spec 14.1 A）。
-- [ ] **Step 2**：`/plan init` 刪本機那份前再確認，多出來的行補進 `plan/log.jsonl`，最多 3 次，還在變就留著本機那份（spec 14.1 B）。
-- [ ] **Step 3**：`/plan init` 失敗的回覆改用對照表、不帶原始錯誤、照實說做到哪一步（spec 14.2）。
+- [x] **Step 1**：本機寫入每次嘗試前重新判斷模式，`plan/log.jsonl` 出現了就改寫進 repo（spec 14.1 A）。
+- [x] **Step 2**：`/plan init` 刪本機那份前再確認，多出來的行補進 `plan/log.jsonl`，最多 3 次，還在變就留著本機那份（spec 14.1 B）。
+- [x] **Step 3**：`/plan init` 失敗的回覆改用對照表、不帶原始錯誤、照實說做到哪一步（spec 14.2）。
+
+實際做法（2026-10-10）：Thoth 任務 `01M4K1Q2Z5YJGFKH4AWN62XR73`，claude-a／sonnet／high，2 輪。第 1 輪八項要求都過，但退回三點：型別錯誤（`commitText` 多了 `'moved'`）、`/plan init` 補行時整份寫回會蓋掉別的 session 剛加的行、「留著本機那份」和「`.gitattributes` 沒改成」同時發生時回覆沒提後者。第 2 輪三點都修好、各有測試；合併後 112 個外掛測試和 2 個 git 合併測試全過。

@@ -89,7 +89,7 @@
 - Task 10 已完成（2026-10-10）：plan-board 裝在 Legion（user scope、`zh-TW`），舊 mod 搬到 `~/.claude/mods-disabled/decisions`，這個 repo 已 `/plan init`。細節記在計畫文件 Task 10。
 - 試用紀錄：Thoth repo `docs/trial/` 第 69–76 件，還沒 commit。
 
-## 之後再修（審查留下的小問題）
+## 之後再修（審查留下的小問題）— 2026-10-10 已修（spec 14、計畫 Task 11）
 
 - 本機模式寫入和另一個 session 的 `/plan init` 同時發生時，寫入可能不見（`commitLocal` 沒重新判斷模式；`initRepo` 刪本機紀錄前沒確認內容沒變）。
 - `/plan init` 失敗的回覆是寫死的英文，還帶原始的系統錯誤訊息。
