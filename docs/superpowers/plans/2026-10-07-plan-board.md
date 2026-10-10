@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-07-plan-board-design.md`。實作前先讀完。本計畫的節號（例如「spec 5.4」）都指這份 spec。
 
-**參考寫法：** Thoth 外掛 `C:\Users\j4503\source\repos\Thoth\plugins\thoth`（`register.tsx`、`i18n.ts`、`tests/panel.test.ts`），以及舊的 decisions mod `C:\Users\j4503\.claude\mods\decisions`（暫存與送出的邏輯、`tests/decisions.test.ts`）。mod API 以 `C:\Users\j4503\thoth-setup\mod-reference\types\claude-code.d.ts` 為準。
+**參考寫法：** Thoth 外掛（`johnny-lo/Thoth` 的 `plugins/thoth`）（`register.tsx`、`i18n.ts`、`tests/panel.test.ts`），以及舊的 decisions mod `~/.claude/mods/decisions`（暫存與送出的邏輯、`tests/decisions.test.ts`）。mod API 以 Claude Code 的 mod 型別定義檔 `claude-code.d.ts` 為準。
 
 ## Global Constraints
 
@@ -576,12 +576,12 @@ test('i18n_tables_have_the_same_keys')
 
 這個 task 改的是 `~/.claude`，不是 repo 裡的檔案，所以**每一步做之前都要先得到使用者同意**。
 
-- [x] **Step 1**：在 Claude Code 執行 `/plugin marketplace add C:/Users/j4503/source/repos/decisions`，再 `/plugin install plan-board@plan-board`，並把 `language` 設成 `zh-TW`。
+- [x] **Step 1**：在 Claude Code 執行 `/plugin marketplace add <這個 repo 的本機路徑>`，再 `/plugin install plan-board@plan-board`，並把 `language` 設成 `zh-TW`。
 - [x] **Step 2**：讀 `~/.claude/plugins/store/decisions_inline-*.json`，確認 `items` 是 `[]`。不是空的，就到每張卡所屬的 repo，用新的 `add_decision` 重開。
 - [x] **Step 3**：刪掉 `~/.claude/mods/decisions`。
 - [x] **Step 4**：在這個 repo 開一個新的 session，確認：窗格打得開；`/plan` 可以用；輸入框上方一列在沒有計畫時不出現；AI 收到的說明是 plan-board 的那一份，而且只有一份。
 
-實際做法（2026-10-10）：Step 2 換裝前剩的是 Thoth 一張新卡，使用者先到 Thoth 回答掉，`items` 變 `[]` 才往下做；原本的 LPC3.0 卡 10/8 已答（先不推，留在本機），不用重開。Step 3 照使用者選的改成搬到 `~/.claude/mods-disabled/decisions`（不刪），另外刪掉 `~/.claude/settings.json` 裡載入它的 `CLAUDE_CODE_PLUGIN_DIRS`。Step 4 四項都過（說明只有一份是用新的 `claude -p` session 查的）；接著用新窗格開的第一張卡也走通了（開卡 → 選擇送回 → `resolve_decision` 結卡）。
+實際做法（2026-10-10）：Step 2 換裝前剩的是 Thoth 一張新卡，使用者先到 Thoth 回答掉，`items` 變 `[]` 才往下做；原本另一個 repo 的卡 10/8 已經答過，不用重開。Step 3 照使用者選的改成搬到 `~/.claude/mods-disabled/decisions`（不刪），另外刪掉 `~/.claude/settings.json` 裡載入它的 `CLAUDE_CODE_PLUGIN_DIRS`。Step 4 四項都過（說明只有一份是用新的 `claude -p` session 查的）；接著用新窗格開的第一張卡也走通了（開卡 → 選擇送回 → `resolve_decision` 結卡）。
 
 ---
 

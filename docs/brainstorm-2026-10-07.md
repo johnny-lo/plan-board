@@ -1,6 +1,6 @@
 # 計畫看板（暫名）：brainstorm 交接筆記
 
-2026-10-07，在 Thoth repo 的 session 裡開始談，使用者說「你可以停在規劃完成前，因為你現在還在 thoth repo 底下」，所以停在設計第 1 段，接下來在這個資料夾（`C:\Users\j4503\source\repos\decisions`，使用者建的，還不是 git repo）繼續。
+2026-10-07，在 Thoth repo 的 session 裡開始談，使用者說「你可以停在規劃完成前，因為你現在還在 thoth repo 底下」，所以停在設計第 1 段，接下來在這個資料夾（`decisions`，使用者建的，還不是 git repo）繼續。
 
 流程：superpowers:brainstorming，**architectural** 路線（新專案）。已完成：理解需求、選方案、設計第 1、2 段（第 2 段在 `decisions` 資料夾的 session 裡談完，同一天）。**還沒寫 spec，也還沒開 GitHub repo**（開公開 repo 前要先問使用者帳號與名字）。
 
@@ -96,7 +96,7 @@
 
 ## 查到的事實
 
-- mod API（以 `C:\Users\j4503\thoth-setup\mod-reference\types\claude-code.d.ts` 為準）：`$.fs` 有 read／write／list／exists／stat，`$.tool.register` 給 AI 新工具，`$.command.register` 加 slash 指令，`$.state`（每個 session、任何插件都能讀、只有擁有者能寫）、`$.store`（存在 Claude Code 設定目錄的 JSON，跨 session，但只在那台電腦）。
-- 現有決定卡片 mod：`C:\Users\j4503\.claude\mods\decisions`（`hooks/register.tsx` 約 400 行、`hooks/list.ts`、`tests/decisions.test.ts`），資料在 `$.store`，state 有 `decisions.items`、`decisions.project`。
+- mod API（以 Claude Code 的 mod 型別定義檔 `claude-code.d.ts` 為準）：`$.fs` 有 read／write／list／exists／stat，`$.tool.register` 給 AI 新工具，`$.command.register` 加 slash 指令，`$.state`（每個 session、任何插件都能讀、只有擁有者能寫）、`$.store`（存在 Claude Code 設定目錄的 JSON，跨 session，但只在那台電腦）。
+- 現有決定卡片 mod：`~/.claude/mods/decisions`（`hooks/register.tsx` 約 400 行、`hooks/list.ts`、`tests/decisions.test.ts`），資料在 `$.store`，state 有 `decisions.items`、`decisions.project`。
 - Thoth 面板（`plugins/thoth/` in johnny-lo/Thoth）是同類 mod 的參考寫法：測試用 `claude plugin test`，檢查用 `claude plugin validate`，不能寫出「字母＋冒號＋斜線」的字面字串（Thoth 自己的可攜性檢查）。
 - Orca 1.4.220：`orca worktree set --workspace-status`（看板欄位 todo／in-progress／in-review／completed，卡片是 worktree）、`orca linear …`（讀寫 Linear）、`orca orchestration task-create／gate-create`（任務 DAG 與決定閘門，Orca 自己的狀態，Orca 的指南不建議一般交接使用）。

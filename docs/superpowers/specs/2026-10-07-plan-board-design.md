@@ -154,7 +154,7 @@
 
 ### 5.1a 沒有 `plan/` 的 repo：存在本機（2026-10-08 加）
 
-使用者選的：只有已經有 `plan/log.jsonl` 的 repo 才把紀錄寫進 repo；其他 repo 存在這台電腦。原因：照原本的設計，AI 在任何 repo 開一張卡，那個 repo 就會多出 `plan/` 並被改 `.gitattributes`，包括別人的 repo（例如 LPC3.0）。
+使用者選的：只有已經有 `plan/log.jsonl` 的 repo 才把紀錄寫進 repo；其他 repo 存在這台電腦。原因：照原本的設計，AI 在任何 repo 開一張卡，那個 repo 就會多出 `plan/` 並被改 `.gitattributes`，包括別人的 repo。
 
 - **兩種模式**：`<根目錄>/plan/log.jsonl` 存在 = **repo 模式**（照 5.1）；不存在 = **本機模式**。每次讀計畫時判斷，不另存設定。
 - **本機模式**：紀錄的文字（格式和 `log.jsonl` 一模一樣，一行一筆、有檢查碼）存在 `$.store` 的 `log:<根目錄>` 底下。讀、寫、重試、檢查碼、重算都沿用同一套程式，只是讀寫的地方不同。本機模式不碰 `.gitattributes`，也不會被別的工具直接改到，所以不會有「被直接改過」的行。
