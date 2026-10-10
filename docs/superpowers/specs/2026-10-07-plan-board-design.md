@@ -328,3 +328,31 @@
 2. **派給 Thoth 任務時不顯示 id**：步驟的派給對象看起來像 id（26 個字元的 ULID，或 8 個以上的十六進位字元）時，畫面上改成 `派給 Thoth 任務`（英文 `assigned to a Thoth task`），不顯示原字串；給 AI 的摘要照舊顯示原字串。
 3. **每個窗格測試都跑 terminal 和 desktop 兩種畫面**（目前 `staged_choice_auto_sends_after_turn_end` 只跑 terminal）。
 4. **改名的紀錄顯示舊名字**：`replay` 套用 `item.edit`（有改 `title` 時）和 `step.edit` 時，把改之前的名字記在 `plan.previousNames[紀錄 id]`；紀錄的文字寫成 `改名「{舊}」→「{新}」`。
+
+## 14. 換裝後的修正（2026-10-10 加）
+
+換裝前審查留下、記在 brainstorm「之後再修」的兩個問題。
+
+### 14.1 本機寫入和另一個 session 的 `/plan init` 同時發生
+
+現在會掉紀錄的兩種情況：
+
+- **A：本機寫入沒重新判斷模式。**工具呼叫用讀進來時的模式決定寫哪裡。讀完之後，另一個 session 跑了 `/plan init`：紀錄搬進 `plan/log.jsonl`，本機那份刪掉。這邊的寫入照樣寫 `$.store`，在那裡長出一份只有新紀錄的本機 log。因為 `plan/log.jsonl` 已經在，之後永遠是 repo 模式，那份本機 log 不會再被讀到。
+- **B：`/plan init` 刪本機那份前沒確認它沒變。**把本機的文字抄進 `plan/log.jsonl` 之後就直接刪掉本機那份。抄完到刪掉之間，別的 session 寫進本機的紀錄會跟著被刪。
+
+要的行為：
+
+- 本機模式的寫入，**每一次嘗試**在寫之前都重新看 `plan/log.jsonl` 在不在。在的話，這筆寫入改照 repo 模式寫進 `plan/log.jsonl`（包括補 `.gitattributes`），不寫 `$.store`。`plan/log.jsonl` 已經在的時候，絕不在 `$.store` 建立或改寫這個 repo 的本機 log。
+- `/plan init` 刪本機那份之前再讀一次。跟抄進去的不一樣，就把多出來的行補進 `plan/log.jsonl`：`plan/log.jsonl` 裡已經有的行不重複加，原本的行都留著（跟 git 的 `merge=union` 同一個意思）。補完再確認一次，最多 3 次。
+- 3 次都還在變：不刪本機那份，回覆「計畫已搬進 `plan/log.jsonl`，但這段時間別的 session 一直在寫本機那份，所以本機那份先留著沒刪」（英文版同義）。`.gitattributes` 照常補。
+- 不加跨 session 的鎖：「重新看」和「寫」之間仍有極短的空檔，接受。
+
+### 14.2 `/plan init` 失敗的回覆
+
+現在是寫死的英文 `Could not create plan/log.jsonl: {原始錯誤}`。改成：
+
+- 文字從對照表拿，照 `language` 回英文或中文，不帶原始的系統錯誤文字。
+- 照實說做到哪一步：
+  - `plan/log.jsonl` 沒建成：說沒建成、什麼都沒改、計畫還在這台電腦。
+  - `plan/log.jsonl` 建成了，之後的步驟出錯（例如刪本機那份失敗）：說計畫已搬進 `plan/log.jsonl`，本機那份還留著。
+- 給 AI 的錯誤（工具呼叫的 `deny`）不在這次範圍，照舊英文。

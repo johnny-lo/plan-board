@@ -582,3 +582,13 @@ test('i18n_tables_have_the_same_keys')
 - [x] **Step 4**：在這個 repo 開一個新的 session，確認：窗格打得開；`/plan` 可以用；輸入框上方一列在沒有計畫時不出現；AI 收到的說明是 plan-board 的那一份，而且只有一份。
 
 實際做法（2026-10-10）：Step 2 換裝前剩的是 Thoth 一張新卡，使用者先到 Thoth 回答掉，`items` 變 `[]` 才往下做；原本的 LPC3.0 卡 10/8 已答（先不推，留在本機），不用重開。Step 3 照使用者選的改成搬到 `~/.claude/mods-disabled/decisions`（不刪），另外刪掉 `~/.claude/settings.json` 裡載入它的 `CLAUDE_CODE_PLUGIN_DIRS`。Step 4 四項都過（說明只有一份是用新的 `claude -p` session 查的）；接著用新窗格開的第一張卡也走通了（開卡 → 選擇送回 → `resolve_decision` 結卡）。
+
+---
+
+### Task 11: 換裝後的修正（spec 14）
+
+用 Thoth 派工。行為照 spec 14，測試先寫。
+
+- [ ] **Step 1**：本機寫入每次嘗試前重新判斷模式，`plan/log.jsonl` 出現了就改寫進 repo（spec 14.1 A）。
+- [ ] **Step 2**：`/plan init` 刪本機那份前再確認，多出來的行補進 `plan/log.jsonl`，最多 3 次，還在變就留著本機那份（spec 14.1 B）。
+- [ ] **Step 3**：`/plan init` 失敗的回覆改用對照表、不帶原始錯誤、照實說做到哪一步（spec 14.2）。
