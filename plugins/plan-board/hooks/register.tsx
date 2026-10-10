@@ -40,6 +40,16 @@ const DENY_MISSING = 'plan/log.jsonl is gone, so nothing was written. Ask the us
 const NOTE_ATTRIBUTES =
   ' Note: .gitattributes could not be updated, so plan/log.jsonl may conflict when branches merge; add the line "plan/log.jsonl merge=union" to .gitattributes.'
 
+const INIT_REPLY = {
+  created: 'initDone',
+  exists: 'initAlready',
+  'no-attributes': 'initNoAttributes',
+  kept: 'initKept',
+  'kept-no-attributes': 'initKeptNoAttributes',
+  failed: 'initFailed',
+  half: 'initHalf',
+} as const
+
 /** The full tool names $.tool.register gave this load's tools. */
 const names = new Map<string, ToolName>()
 
@@ -218,12 +228,12 @@ export const register: Register = (on, options) => {
       if (!ran.ok) return { deny: ran.error }
       let outcome: Awaited<ReturnType<typeof commitEntries>>
       try {
-        // The mode the plan was read in: the write goes where the read came from, and never makes plan/log.jsonl appear.
+        // The mode the plan was read in: a repo write never makes plan/log.jsonl appear; a local one looks again before each write.
         const top = await rootNow($)
         outcome =
           current.storage === 'repo'
             ? await commitEntries(filesOf($), top, ran.entries, ran.drop)
-            : await commitLocal(storeOf($), top, ran.entries, ran.drop)
+            : await commitLocal(filesOf($), storeOf($), top, ran.entries, ran.drop)
       } catch (err) {
         return { deny: `Could not write the plan: ${err instanceof Error ? err.message : String(err)}` }
       }
@@ -274,11 +284,11 @@ export const register: Register = (on, options) => {
       let made: Awaited<ReturnType<typeof initRepo>>
       try {
         made = await initRepo(filesOf($), storeOf($), await rootNow($))
-      } catch (err) {
-        return { text: `Could not create plan/log.jsonl: ${err instanceof Error ? err.message : String(err)}` }
+      } catch {
+        made = 'failed'
       }
-      await refresh($)
-      return { text: t(lang, made === 'exists' ? 'initAlready' : made === 'created' ? 'initDone' : 'initNoAttributes') }
+      await refresh($).catch(() => emptyPlan())
+      return { text: t(lang, INIT_REPLY[made]) }
     }
     await refresh($)
     await $.ui.open({ id: PANE, title: TITLE })

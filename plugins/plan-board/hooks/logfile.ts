@@ -125,13 +125,27 @@ export async function nextText(text: string, entries: Entry[], drop: string[]): 
 /**
  * Writes the entries (and removes the dropped lines) unless another session changed the text meanwhile; at most 3 tries.
  * `'missing'`: the medium holds no log and may not make one.
+ * `'moved'`: only when `elsewhere` is given; it said, right before a write, that the log now lives somewhere else, and nothing was written.
  */
-export async function commitText(medium: Medium, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing'> {
+export function commitText(medium: Medium, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing'>
+export function commitText(
+  medium: Medium,
+  entries: Entry[],
+  drop: string[],
+  elsewhere: () => Promise<boolean>,
+): Promise<'ok' | 'busy' | 'missing' | 'moved'>
+export async function commitText(
+  medium: Medium,
+  entries: Entry[],
+  drop: string[],
+  elsewhere: () => Promise<boolean> = async () => false,
+): Promise<'ok' | 'busy' | 'missing' | 'moved'> {
   for (let attempt = 0; attempt < TRIES; attempt++) {
     const before = await medium.read()
     if (before === null && !medium.mayCreate) return 'missing'
     const next = await nextText(before?.text ?? '', entries, drop)
     if ((await medium.version()) !== (before?.version ?? null)) continue
+    if (await elsewhere()) return 'moved'
     await medium.write(next)
     return 'ok'
   }
@@ -154,25 +168,78 @@ export async function commitEntries($: Files, root: string, entries: Entry[], dr
   return 'ok'
 }
 
-/** Appends to the log kept in $.store (local mode); .gitattributes is not touched. */
-export function commitLocal(store: Store, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing'> {
-  return commitText(storeMedium(store, root), entries, drop)
+/**
+ * Appends to the log kept in $.store (local mode). Before every write it looks for plan/log.jsonl again: when another
+ * session's /plan init has made it, the entries go there instead (repo mode), and $.store is left alone.
+ */
+export async function commitLocal($: Files, store: Store, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing' | 'no-attributes'> {
+  const outcome = await commitText(storeMedium(store, root), entries, drop, () => $.fs.exists(logPath(root)))
+  return outcome === 'moved' ? commitEntries($, root, entries, drop) : outcome
+}
+
+/** The lines of `text` that `base` does not have, each once, in order; `text` is where they come from. */
+function gainedLines(base: string, text: string): string[] {
+  const known = new Set(base.split('\n'))
+  const gained: string[] = []
+  for (const line of text.split('\n')) {
+    if (line === '' || known.has(line)) continue
+    known.add(line)
+    gained.push(line)
+  }
+  return gained
+}
+
+/** Adds the lines of `now` that plan/log.jsonl lacks, unless another session changed it meanwhile; at most 3 tries, then it throws. */
+async function appendGained(medium: Medium, now: string): Promise<void> {
+  for (let attempt = 0; attempt < TRIES; attempt++) {
+    const before = await medium.read()
+    if (before === null) throw new Error('plan/log.jsonl is gone')
+    const gained = gainedLines(before.text, now)
+    if (gained.length === 0) return
+    if ((await medium.version()) !== before.version) continue
+    await medium.write(before.text + (before.text === '' || before.text.endsWith('\n') ? '' : '\n') + gained.join('\n') + '\n')
+    return
+  }
+  throw new Error('plan/log.jsonl keeps changing')
 }
 
 /**
- * What /plan init does: plan/log.jsonl gets the local text unchanged, the local copy goes away and .gitattributes gets its line.
+ * What /plan init does: plan/log.jsonl gets the local text, the local copy goes away and .gitattributes gets its line.
+ * The local copy is read again before it goes: lines it gained meanwhile are added to plan/log.jsonl (the ones already
+ * there stay, as with merge=union, and a line another session adds meanwhile is not overwritten), up to 3 times.
  * `'exists'`: the repo already has the file, so nothing was touched.
+ * `'kept'`: the local copy kept changing, so it was not deleted.
+ * `'kept-no-attributes'`: the same, and .gitattributes could not be brought up to date either.
+ * `'failed'`: plan/log.jsonl could not be made; nothing changed.
+ * `'half'`: plan/log.jsonl was made, but a later step failed.
  */
-export async function initRepo($: Files, store: Store, root: string): Promise<'created' | 'exists' | 'no-attributes'> {
-  if (await $.fs.exists(logPath(root))) return 'exists'
-  await $.fs.write(logPath(root), await readStored(store, root))
-  await store.delete(storeKey(root))
+export async function initRepo($: Files, store: Store, root: string): Promise<'created' | 'exists' | 'no-attributes' | 'kept' | 'kept-no-attributes' | 'failed' | 'half'> {
+  let isWritten = false
   try {
-    await ensureAttributes($, root)
+    if (await $.fs.exists(logPath(root))) return 'exists'
+    let seen = await readStored(store, root)
+    await $.fs.write(logPath(root), seen)
+    isWritten = true
+    let isDeleted = false
+    for (let check = 0; check < TRIES && !isDeleted; check++) {
+      const now = await readStored(store, root)
+      if (now === seen) {
+        await store.delete(storeKey(root))
+        isDeleted = true
+        continue
+      }
+      await appendGained(repoMedium($, root), now)
+      seen = now
+    }
+    try {
+      await ensureAttributes($, root)
+    } catch {
+      return isDeleted ? 'no-attributes' : 'kept-no-attributes'
+    }
+    return isDeleted ? 'created' : 'kept'
   } catch {
-    return 'no-attributes'
+    return isWritten ? 'half' : 'failed'
   }
-  return 'created'
 }
 
 export async function ensureAttributes($: Files, root: string): Promise<void> {

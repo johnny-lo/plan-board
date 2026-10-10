@@ -19,8 +19,12 @@ export type World = {
   clockStep: number
   /** While set, a write to a path ending with this fails, as on a read-only file. */
   failWrites: string | null
+  /** While true, deleting a store key fails. */
+  failDeletes: boolean
   /** Called on every store read before it answers, so a test can play another session writing at that moment. */
   onStoreGet: ((key: string) => void) | null
+  /** Called on every file read after it took its text but before it answers, so a test can play another session writing right after the read. */
+  onRead: ((path: string) => void) | null
 }
 
 // A session on /repo, in memory: files, the plugin store, git, a clock that moves by itself and timers the test fires.
@@ -41,7 +45,9 @@ export function world(on: On, files: Record<string, string> = {}): World {
     statBump: false,
     clockStep: 1000,
     failWrites: null,
+    failDeletes: false,
     onStoreGet: null,
+    onRead: null,
   }
   // The engine hands paths over in the host's spelling (drive letter and backslashes on Windows); files are keyed /repo/plan.
   const key = (path: string): string => path.replace(/^[a-z]:/i, '').replace(/\\/g, '/')
@@ -50,7 +56,9 @@ export function world(on: On, files: Record<string, string> = {}): World {
   on('fs.exists', (_, e) => ({ value: has(e.path) }))
   on('fs.read', (_, e) => {
     if (!has(e.path)) throw new Error(`ENOENT: ${e.path}`)
-    return { value: w.files[key(e.path)] }
+    const text = w.files[key(e.path)]
+    w.onRead?.(key(e.path))
+    return { value: text }
   })
   on('fs.write', (_, e) => {
     if (w.failWrites !== null && key(e.path).endsWith(w.failWrites)) return { deny: 'read-only file system' }
@@ -68,6 +76,7 @@ export function world(on: On, files: Record<string, string> = {}): World {
     return { value: w.store.get(e.key) }
   })
   on('store.delete', (_, e) => {
+    if (w.failDeletes) return { deny: 'store is locked' }
     w.store.delete(e.key)
     return { value: undefined }
   })
