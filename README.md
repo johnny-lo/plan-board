@@ -45,12 +45,14 @@ There are two modes, decided each time the plan is read: **repo mode** when `pla
 |---|---|---|
 | Items: add, remove, split, merge, change the sentence or the goal, reorder | The AI opens a proposal card with `propose_change`, you choose **Approve**, the AI applies it with `apply_change` | Yes |
 | An item's state | Nobody sets it; it is computed from its steps (done, in progress, next, later) | n/a |
-| Steps: add, reword, remove, move to another item, assign, change status | The AI uses `update_step` | No, but every change is logged with a reason |
+| Steps: add, reword, remove, move to another item, assign, change status, note where they stand | The AI uses `update_step` | No, but every change is logged with a reason |
 
 - An **item** is your level: one sentence and one line for what done looks like. Items are ordered.
-- A **step** is the AI's level: one sentence, a status (not started, in progress, done) and optionally who it is assigned to. A step is **stuck** while an open card points at it.
-- A step is marked done only with evidence: a Thoth task id once the AI's Thoth tools show the task passed, or a one-line result the AI reports.
+- A **step** is the AI's level: one sentence, a status (not started, in progress, done), optionally who it is assigned to, and a note on where it stands or who it waits on. A note is not shown in the change history and clears itself when the step is done. A step is **stuck** while an open card points at it. The AI can add a step already started, assigned and noted in one go.
+- A step is marked done only with evidence, given on that one change: a Thoth task id once the AI's Thoth tools show the task passed, or a one-line result the AI reports.
 - **Decision cards** are questions the AI asks with `add_decision` (2 to 4 options, each with what it leads to, at most one recommended) and the proposals above. A card names the item and step it is about, says why it is asked now and shows the item's last three changes. Choices that block the AI's work are sent at once; the others are staged, sent with one button, sent by themselves after a minute without activity, and held until the AI's turn ends when it is working. A sent card is dimmed until the AI closes it.
+- **Action cards** ask you to do something yourself, such as running a command in your terminal: one line, why, and the command. Press **Done** when you have done it; it is sent at once, and the AI checks it if it can and closes the card. Action cards sit with the decision cards, come first, and count in the same number above the prompt ("3 waiting for you"). A step an action card points at shows "waiting for you to: …".
+- The change history of an item keeps item changes, cards and direct edits on their own lines. Two or more step changes in a row fold into one line, such as "Steps: 3 done, 2 added", which opens on a press. Reasons are hidden until you press a line.
 - A card you answered only with a thought stays open: its options and the thought box remain, with your thought shown, and it still counts as waiting for you. A card you answered with a choice, or skipped, is dimmed.
 - The pane never shows ids. A step assigned to a Thoth task shows as "assigned to a Thoth task" instead of the task id.
 

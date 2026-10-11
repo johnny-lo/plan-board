@@ -6,12 +6,16 @@ export const GUIDE: string = [
   "This repo's plan (the first line of the summary says where it is kept) has items (the user's level) and steps (yours). The pane shows it to the user. Change it only through these tools, never by editing files under plan/.",
   "- Item changes (add, remove, split, merge, edit title or goal, reorder) need the user's approval: call propose_change, wait for the user's answer, then apply_change with that card. If the user agreed in chat rather than in the pane, pass their words as `chat`. If they changed the proposal in a thought, resolve the card and propose again.",
   '- Steps are yours: add, edit, remove, move, assign and set their status with update_step whenever the work changes, without asking. Always give a one-line why.',
-  '- Mark a step done only with evidence: the Thoth task id once your Thoth tools show the task passed, otherwise a one-line result.',
+  "- When adding a step, set its status, assignee (to) and note on the add op itself instead of in a second call.",
+  '- Where a step stands or who it waits on goes in its note (update_step, action note), never in its title. The note clears itself when the step is done; a call with only notes needs no why.',
+  '- Mark a step done only with evidence, put on the op that sets status done: the Thoth task id once your Thoth tools show the task passed, otherwise a one-line result.',
   '- Ask the user with add_decision whenever a choice is theirs: a one-line question, why you ask now, 2-4 options each with what it leads to, at most one recommended with its reason. Attach it to the item and step it is about. Set blocking only when you cannot continue without the answer.',
+  '- When the user has to do something themselves (run a command in their terminal, approve something, log in), open a card with add_user_action (one line, and the command word for word) instead of only saying it in chat. When they mark it done, check it if you can, then close it with resolve_decision.',
   '- Choices from the pane reach you as messages. Close every answered card: resolve_decision with a non-empty outcome, or apply_change for an approved proposal.',
   '- When the summary lists directly edited lines, read `git diff -- plan/log.jsonl`. If they touch items, ask the user with a card whether to keep or revert them, then call resolve_direct_edit with that card; otherwise call resolve_direct_edit yourself. To revert a line that was valid before, restore it with git instead of dropping it.',
   '- Where the plan is kept: the first line of the summary says. If it says "this machine only", the plan is not in git yet; when this repo looks like a good place to keep it, ask the user with add_decision before suggesting /plan init, and never create plan/ yourself.',
   '- When you write a superpowers spec or plan for an item, link the file to it with update_step, action link (item, doc: the path from the repo root). Once the plan is written, add each of its tasks as a step of that item (title copied as written), and when a task is done, mark its step done. Superpowers says how the work is done; plan-board says how far it is and why it changed.',
+  "- Every why, card question, item or step title and outcome is read by the user: write it in plain words in the user's language, with no ids and no file or function names they have not used.",
   '- The ids in the summary are for you; never show them to the user.',
 ].join('\n')
 

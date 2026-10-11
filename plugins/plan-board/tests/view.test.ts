@@ -225,7 +225,7 @@ test('guide_asks_before_plan_init_and_links_superpowers_documents', () => {
 })
 
 test('guide_names_every_tool', () => {
-  for (const name of ['propose_change', 'apply_change', 'update_step', 'add_decision', 'resolve_decision', 'resolve_direct_edit', 'plan/']) {
+  for (const name of ['propose_change', 'apply_change', 'update_step', 'add_decision', 'add_user_action', 'resolve_decision', 'resolve_direct_edit', 'plan/']) {
     expect(GUIDE).toContain(name)
   }
 })
@@ -303,4 +303,13 @@ test('fold_history_groups_runs_of_step_chatter', async () => {
   expect(isChatter(entries[7])).toBe(false)
   expect(isChatter(entries[4])).toBe(false)
   expect(foldHistory([])).toEqual([])
+})
+
+test('guide_covers_notes_actions_evidence_and_plain_words', () => {
+  expect(GUIDE).toContain('action note')
+  expect(GUIDE).toContain('never in its title')
+  expect(GUIDE).toContain('on the add op itself')
+  expect(GUIDE).toContain('on the op that sets status done')
+  expect(GUIDE).toContain('add_user_action')
+  expect(GUIDE).toContain('plain words')
 })
