@@ -34,7 +34,7 @@ const plan = atom({ plugin: 'plan-board', key: 'plan' } as const, emptyPlan())
 const local = atom({ plugin: 'plan-board', key: 'local' } as const, emptyLocal())
 
 const DENY_EDIT =
-  'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, resolve_decision, resolve_direct_edit.'
+  'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, add_user_action, resolve_decision, resolve_direct_edit.'
 const DENY_BUSY = 'The plan file is being written by another session; try again.'
 const DENY_MISSING = 'plan/log.jsonl is gone, so nothing was written. Ask the user to restore it, or to run /plan init for a fresh one.'
 const NOTE_ATTRIBUTES =
@@ -187,9 +187,9 @@ async function sendNow($: EngineInterface, card: Card, make: (current: Local, at
   await $.prompt.submit({ text: blockingMessage(card, sent[0][1]) })
 }
 
-// A blocking card is answered at once; any other pick is staged for the batch.
+// A blocking card is answered at once, and so is a card asking the user to do something; any other pick is staged for the batch.
 const act = ($: EngineInterface, card: Card, make: (current: Local, at: number) => Local): Promise<void> =>
-  card.blocking === true ? sendNow($, card, make) : stage($, make)
+  card.blocking === true || card.type === 'action' ? sendNow($, card, make) : stage($, make)
 
 async function toggle($: EngineInterface, id: string): Promise<void> {
   const current = await read($, local)

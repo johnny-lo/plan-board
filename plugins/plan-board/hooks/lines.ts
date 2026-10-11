@@ -117,7 +117,7 @@ export function changeLine(change: Change, plan: Plan, lang: Lang, previous?: st
     case 'step.note':
       return `${t(lang, 'kindStep')} ${t(lang, 'stepNote', { step: name(change.data.step), note: change.data.note })}`
     case 'card.open':
-      return `${t(lang, 'kindCard')} ${t(lang, 'cardOpen', { question: change.data.card.question })}`
+      return `${t(lang, 'kindCard')} ${t(lang, change.data.card.type === 'action' ? 'actionOpen' : 'cardOpen', { question: change.data.card.question })}`
     case 'card.resolve':
       return `${t(lang, 'kindCard')} ${t(lang, 'cardResolve', { question: name(change.data.card), outcome: change.data.outcome })}`
     case 'edit.keep':

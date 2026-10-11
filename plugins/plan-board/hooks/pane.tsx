@@ -102,7 +102,10 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
                     .map(stepId => {
                       const step = current.steps[stepId]
                       const waiting = open.find(card => card.step === stepId)
-                      const note = waiting === undefined ? evidenceOf(step, lang) : t(lang, 'blockedBy', { question: waiting.question })
+                      const note =
+                        waiting === undefined
+                          ? evidenceOf(step, lang)
+                          : t(lang, waiting.type === 'action' ? 'waitingAction' : 'blockedBy', { question: waiting.question })
                       return (
                         <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
                           <Text>{`${markOf(step, waiting !== undefined, lang)} ${step.title}`}</Text>
@@ -142,6 +145,9 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
     const staged = Object.hasOwn(mine.staged, card.id) ? mine.staged[card.id] : undefined
     const thought = Object.hasOwn(mine.sent, card.id) ? mine.sent[card.id].draft : undefined
     const isFirst = card.id === firstId
+    const isAction = card.type === 'action'
+    // An action card is answered at once, as a blocking one is.
+    const isNow = card.blocking === true || isAction
     const hotkey = (i: number) => (isFirst && i < 9 ? { hotkey: String(i + 1) } : {})
     const border = (color: string) => ({ borderStyle: 'round', borderColor: color, paddingX: 1 }) as const
 
@@ -154,7 +160,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
           <Text dimColor wrap="wrap">
             {where}
           </Text>
-          <Text dimColor>{t(lang, 'sentWaiting')}</Text>
+          <Text dimColor>{t(lang, isAction ? 'sentChecking' : 'sentWaiting')}</Text>
         </Box>
       )
     }
@@ -169,22 +175,59 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
       )
     }
 
+    const head = (
+      <Box justifyContent="space-between">
+        <Box flexShrink={1}>
+          {isFirst ? (
+            <Text bold wrap="wrap">
+              {card.question}
+            </Text>
+          ) : (
+            <Button key={`card:${card.id}`} plain label={card.question} onPress={() => actions.toggle(card.id)} />
+          )}
+        </Box>
+        <Button key={`${card.id}:x`} plain dimColor role="dismiss" label="✕" onPress={() => actions.dismiss(card)} />
+      </Box>
+    )
+    const yours = thought !== undefined && (
+      <Box marginTop={1}>
+        <Text wrap="wrap">{t(lang, 'yourThought', { draft: thought })}</Text>
+      </Box>
+    )
+    const noteBox = Input && (
+      <Box marginTop={1}>
+        <Input
+          key={`${card.id}:note`}
+          placeholder={t(lang, isNow ? 'notePlaceholderNow' : 'notePlaceholderStaged')}
+          submitLabel={t(lang, isNow ? 'noteNow' : 'noteStaged')}
+          onSubmit={(value: string) => actions.think(card, value)}
+        />
+      </Box>
+    )
+
+    if (isAction) {
+      return (
+        <Box key={`card:box:${card.id}`} flexDirection="column" {...border(isFirst ? 'yellow' : 'gray')}>
+          {head}
+          <Text dimColor italic wrap="wrap">
+            {where}
+          </Text>
+          <Text wrap="wrap">{t(lang, 'actionWhy', { why: card.why })}</Text>
+          {card.command !== undefined && <Text wrap="wrap">{t(lang, 'command', { command: card.command })}</Text>}
+          <Box marginTop={1}>
+            <Button key={`${card.id}:done`} plain {...hotkey(0)} label={t(lang, 'actionDone')} onPress={() => actions.choose(card, 'done')} />
+          </Box>
+          {yours}
+          {noteBox}
+        </Box>
+      )
+    }
+
     const recent = recentFor(current, card, RECENT)
     const hasStaged = staged !== undefined
     return (
       <Box key={`card:box:${card.id}`} flexDirection="column" {...border(hasStaged ? 'green' : isFirst ? 'yellow' : 'gray')}>
-        <Box justifyContent="space-between">
-          <Box flexShrink={1}>
-            {isFirst ? (
-              <Text bold wrap="wrap">
-                {card.question}
-              </Text>
-            ) : (
-              <Button key={`card:${card.id}`} plain label={card.question} onPress={() => actions.toggle(card.id)} />
-            )}
-          </Box>
-          <Button key={`${card.id}:x`} plain dimColor role="dismiss" label="✕" onPress={() => actions.dismiss(card)} />
-        </Box>
+        {head}
         <Text dimColor italic wrap="wrap">
           {where}
         </Text>
@@ -244,11 +287,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
             })
           )}
         </Box>
-        {thought !== undefined && (
-          <Box marginTop={1}>
-            <Text wrap="wrap">{t(lang, 'yourThought', { draft: thought })}</Text>
-          </Box>
-        )}
+        {yours}
         {hasStaged && (
           <Box justifyContent="space-between" marginTop={1}>
             <Box flexDirection="column" flexShrink={1}>
@@ -271,16 +310,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
             <Button key={`${card.id}:clear`} plain dimColor label={t(lang, 'clear')} onPress={() => actions.clear(card)} />
           </Box>
         )}
-        {Input && (
-          <Box marginTop={1}>
-            <Input
-              key={`${card.id}:note`}
-              placeholder={t(lang, card.blocking === true ? 'notePlaceholderNow' : 'notePlaceholderStaged')}
-              submitLabel={t(lang, card.blocking === true ? 'noteNow' : 'noteStaged')}
-              onSubmit={(value: string) => actions.think(card, value)}
-            />
-          </Box>
-        )}
+        {noteBox}
       </Box>
     )
   }

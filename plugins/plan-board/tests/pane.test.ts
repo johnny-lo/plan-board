@@ -69,6 +69,11 @@ const board = () => [
 ]
 const blockedOnS2 = () => question(Q1, { item: B, step: S2 })
 const loose = () => question(Q2, { question: '要不要加英文文件？', why: '使用者之前提過', options: [{ label: '加', effect: '多一份文件' }, { label: '不加', effect: '先不做' }] })
+const ACTION = '在終端機跑 thoth checks approve'
+const addAction = async ($: Engine, extra: Record<string, unknown> = {}) => {
+  const added = await $.tool.call({ tool: tool('add_user_action'), action: ACTION, why: '新的檢查要人核准才會跑', command: 'thoth checks approve', ...extra })
+  return /card (\w{8})/.exec(String(added.result))?.[1] as string
+}
 
 async function start($: Engine, on: Parameters<typeof world>[0], entries: ReturnType<typeof entry>[] | null, extra = ''): Promise<World> {
   const w = world(on, entries === null ? {} : { [LOG]: (await logText(entries)) + extra })
@@ -143,7 +148,7 @@ test('cards_view_expands_only_the_first', ZH, async ($, on) => {
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await pane($, surface)
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你決定（2）' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（2）' })).toBeDefined()
     await ui.press({ key: 'view:cards' })
     expect(localOf(w).view).toBe('cards')
 
@@ -204,7 +209,7 @@ test('proposal_card_lists_changes_and_approve_is_staged', ZH, async ($, on) => {
 
     const applied = await $.tool.call({ tool: tool('apply_change'), card })
     expect(applied.deny).toBeUndefined()
-    expect(await ui.find({ text: '✓ 目前沒有待你決定的事' })).toBeDefined()
+    expect(await ui.find({ text: '✓ 目前沒有等你的事' })).toBeDefined()
     await ui.unmount()
   }
 })
@@ -359,7 +364,7 @@ test('band_text_and_edit_warning', ZH, async ($, on) => {
     await fresh($, w)
     const ui = await band($, surface)
     const line = await ui.find({ type: 'Text', text: /計畫：/ })
-    expect(line?.text).toBe('計畫：1 項進行中 · 2 個決定等你')
+    expect(line?.text).toBe('計畫：1 項進行中 · 2 件事等你')
     expect(await ui.find({ text: '⚠' })).toBeUndefined()
     await ui.press({ key: 'open' })
     expect(w.opened).toContain('plan-board')
@@ -377,7 +382,7 @@ test('band_text_and_edit_warning', ZH, async ($, on) => {
   await $.prompt.submit({ text: '' })
   for (const surface of SURFACES) {
     const sent = await band($, surface)
-    expect((await sent.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 個決定等你')
+    expect((await sent.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 件事等你')
     await sent.unmount()
   }
 
@@ -387,7 +392,7 @@ test('band_text_and_edit_warning', ZH, async ($, on) => {
   for (const surface of SURFACES) {
     const ui = await band($, surface)
     const warned = await ui.find({ type: 'Text', text: /計畫：/ })
-    expect(warned?.text).toBe('計畫：1 項進行中 · 1 個決定等你 · ⚠ 計畫被直接改過')
+    expect(warned?.text).toBe('計畫：1 項進行中 · 1 件事等你 · ⚠ 計畫被直接改過')
     await ui.unmount()
     const overview = await pane($, surface)
     expect(await overview.find({ text: '計畫被直接改過，等 AI 檢查' })).toBeDefined()
@@ -402,8 +407,8 @@ test('empty_repo_shows_hint_and_engine_band', ZH, async ($, on) => {
     const ui = await pane($, surface)
     expect(await ui.find({ text: '這個 repo 還沒有計畫' })).toBeDefined()
     await ui.press({ key: 'view:cards' })
-    expect(await ui.find({ text: '✓ 目前沒有待你決定的事' })).toBeDefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你決定（0）' })).toBeDefined()
+    expect(await ui.find({ text: '✓ 目前沒有等你的事' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
     await ui.unmount()
 
     const line = await band($, surface)
@@ -429,6 +434,9 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     entry('step.edit', { step: S3, title: '輸入框上方一列文字' }),
     entry('step.move', { step: S3, item: C }),
     entry('step.move', { step: S3, item: B }),
+    entry('card.open', {
+      card: { id: '5a5a5a5a', type: 'action', item: B, step: S2, question: ACTION, why: '新的檢查要人核准', options: [], command: 'thoth checks approve' },
+    }),
     blockedOnS2(),
     loose(),
     entry('card.open', {
@@ -450,7 +458,7 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
       },
     }),
   ])
-  const cards = [Q1, Q2, P1]
+  const cards = ['5a5a5a5a', Q1, Q2, P1]
   const items = [A, B, C, D]
   for (const surface of SURFACES) {
     await fresh($, w)
@@ -508,9 +516,9 @@ test('thought_only_card_stays_interactive_after_sending', ZH, async ($, on) => {
     expect(await ui.find({ key: `${id}:x` })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '你的想法：先看 CI 用哪個' })).toBeDefined()
     expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你決定（1）' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（1）' })).toBeDefined()
     const line = await band($, surface)
-    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 1 個決定等你')
+    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 1 件事等你')
     await line.unmount()
 
     // A choice sent afterwards settles the waiting: the card is dimmed as before.
@@ -520,9 +528,9 @@ test('thought_only_card_stays_interactive_after_sending', ZH, async ($, on) => {
     expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
     expect(await ui.find({ key: `${id}:0` })).toBeUndefined()
     expect(await ui.find({ key: `${id}:note` })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你決定（0）' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
     const after = await band($, surface)
-    expect((await after.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 0 個決定等你')
+    expect((await after.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 0 件事等你')
     await after.unmount()
     await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: 'LRU' })
     await ui.unmount()
@@ -551,7 +559,7 @@ test('a_blocking_thought_leaves_the_card_open_but_a_dismissal_dims_it', ZH, asyn
     await until(ui, () => w.submitted.length > 1)
     expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
     expect(await ui.find({ key: `${other}:x` })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你決定（1）' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（1）' })).toBeDefined()
     for (const id of [blocking, other]) await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: 'noted' })
     await ui.unmount()
     w.submitted.length = 0
@@ -741,21 +749,22 @@ test('i18n_tables_have_the_same_keys', () => {
 
   // Every fixed zh-TW text of the design is in the table, word for word.
   const words = [
-    '總表', '等你決定（{n}）', '做完', '進行中', '下一個', '之後', '做完的樣子：{goal}', '── 變動紀錄 ──', '原因：{why}',
+    '總表', '等你（{n}）', '做完', '進行中', '下一個', '之後', '做完的樣子：{goal}', '── 變動紀錄 ──', '原因：{why}',
     '✓', '●', '○', '⚑', '等你決定：{question}', 'Thoth pass', 'AI 回報：{result}',
     ' · 你在「{question}」選了同意', ' · 你在對話裡說：「{chat}」',
     '{item} · 第 {n} 項 · 卡在「{step}」', '{item} · 第 {n} 項', '其他', '為什麼現在問：{why}', '之前：', '（建議）', '同意', '不要',
     '送出 {n} 個決定', '停止操作 1 分鐘後自動送出；Claude 工作中就等這輪結束再送', '已選：{choice}（待送出）', '想法：{draft}（待送出）', '清除', '已送出，等 AI 結案',
     '或寫下你的想法…（立即送出）', '或寫下你的想法…（和選擇一起送出）', '送出', '暫存',
-    '這個 repo 還沒有計畫', '✓ 目前沒有待你決定的事',
+    '這個 repo 還沒有計畫', '✓ 目前沒有等你的事',
     '這個計畫只存在這台電腦；在 repo 裡打 /plan init 才會跟著 git 走', '文件：{path}', '你的想法：{draft}', '派給 Thoth 任務', '派給 {to}',
     '計畫已搬進 repo，現在存在 plan/log.jsonl。', '這個 repo 已經把計畫存在 plan/log.jsonl，什麼都沒改。',
-    '計畫被直接改過，等 AI 檢查', '· ⚠ 計畫被直接改過', '計畫：{doing} 項進行中 · {waiting} 個決定等你', '打開',
+    '計畫被直接改過，等 AI 檢查', '· ⚠ 計畫被直接改過', '計畫：{doing} 項進行中 · {waiting} 件事等你', '打開',
+    '做好了', '為什麼：{why}', '指令：{command}', '已送出，等 AI 確認', '等你處理：{question}', '請你「{question}」',
   ]
   const values = new Set(zh.map(key => t('zh-TW', key as never)))
   // t fills slots it has values for; unfilled ones stay as written.
   for (const word of words) expect(values.has(word)).toBe(true)
-  expect(t('zh-TW', 'viewCards' as never, { n: 3 })).toBe('等你決定（3）')
+  expect(t('zh-TW', 'viewCards' as never, { n: 3 })).toBe('等你（3）')
   expect(t('en', 'viewCards' as never, { n: 3 })).not.toContain('{n}')
 })
 
@@ -820,4 +829,76 @@ test('history_lines_render_every_kind_with_names', async () => {
   const d = new Date(at)
   const two = (n: number) => String(n).padStart(2, '0')
   expect(stamp(at)).toBe(`${two(d.getMonth() + 1)}/${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`)
+})
+
+test('action_card_shows_the_command_and_done_goes_out_at_once', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), blockedOnS2()])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await addAction($, { item: B, step: S2 })
+    const ui = await pane($, surface)
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（2）' })).toBeDefined()
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ text: `等你處理：${ACTION}` })).toBeDefined()
+    expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
+
+    await ui.press({ key: 'view:cards' })
+    // The action card comes first and opens by itself; the question waits closed.
+    expect(await ui.find({ type: 'Text', text: '為什麼：新的檢查要人核准才會跑' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '指令：thoth checks approve' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: `${id}:done`, text: '做好了' })).toBeDefined()
+    expect(await ui.find({ key: `${id}:note` })).toBeDefined()
+    expect(await ui.find({ key: `${id}:x` })).toBeDefined()
+    expect(await ui.find({ key: `${Q1}:0` })).toBeUndefined()
+    expect(await ui.find({ text: '之前：' })).toBeUndefined()
+
+    // Claude is working: a done still goes out at once.
+    await $.turn.start({ text: 'working', turnId: 't1' })
+    await ui.press({ key: `${id}:done` })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]).toContain(`Done by the user: "${ACTION}" [${id}]`)
+    expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
+    expect(await ui.find({ key: 'send' })).toBeUndefined()
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+    const line = await band($, surface)
+    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 件事等你')
+    await line.unmount()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '檢查已核准' })
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+
+test('action_card_skip_and_thought_go_out_at_once', ZH, async ($, on) => {
+  const w = await start($, on, null)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await addAction($)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: '其他' })).toBeDefined()
+    await ui.input({ key: `${id}:note`, text: '我沒有權限' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted[0]).toContain(`My thoughts on "${ACTION}"`)
+    expect(await ui.find({ key: `${id}:done` })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '你的想法：我沒有權限' })).toBeDefined()
+
+    await ui.press({ key: `${id}:x` })
+    await until(ui, () => w.submitted.length > 1)
+    expect(w.submitted[1]).toContain('dismissed')
+    expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '使用者略過' })
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+
+test('action_card_history_line', async () => {
+  const plan = await replay(
+    await logText([entry('card.open', { card: { id: Q0, type: 'action', question: ACTION, why: 'w', options: [], command: 'thoth checks approve' } })]),
+  )
+  expect(historyLines(plan.applied[0], plan, 'zh-TW')[0]).toContain(`卡片 請你「${ACTION}」`)
+  expect(historyLines(plan.applied[0], plan, 'en')[0]).toContain(`Card asked you to "${ACTION}"`)
 })
