@@ -642,7 +642,7 @@ test('i18n_tables_have_the_same_keys')
 - Produces: `Step.note?: string`；紀錄種類 `{ kind: 'step.note'; data: { step: string; note: string } }`；`update_step` 的 op `{ action: 'note', step, note }`；`update_step` 的 `why` 在全部 op 都是 `note` 時可以不給；i18n 鍵 `stepNote`。
 - Consumes: 無。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 `tests/replay.test.ts` 最後加：
 
@@ -743,12 +743,12 @@ test('a_step_note_shows_beside_the_step_but_not_in_the_history', ZH, async ($, o
 })
 ```
 
-- [ ] **Step 2: 跑測試，確認新的測試失敗**
+- [x] **Step 2: 跑測試，確認新的測試失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: 上面 5 個測試 FAIL（例如 `unsupported kind: step.note`、`ops[0].action must be one of …`、`why is required`），其餘照舊 pass。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `types/index.d.ts`：`StepChange` 加一種，`Step` 加 `note`：
 
@@ -896,12 +896,12 @@ export type Step = { id: string; item: string; title: string; status: StepStatus
                           {note !== '' && <Text dimColor>{note}</Text>}
 ```
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `116 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -923,7 +923,7 @@ git commit -m "feat(plan-board): step notes that stay out of the change history"
 - Consumes: Task 12 的 `Step.note`、`note` op。
 - Produces: `step.add` 的 `data` 多 `status?: StepStatus`、`to?: string`、`note?: string`、`result?: string`；`update_step` 的 op 多 `evidence?: { thoth?: string; result?: string }`，整次呼叫的 `evidence` 拒絕。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 `tests/replay.test.ts` 最後加：
 
@@ -1123,12 +1123,12 @@ test('step_add_history_says_how_the_step_started', async () => {
 })
 ```
 
-- [ ] **Step 2: 跑測試，確認新的測試失敗**
+- [x] **Step 2: 跑測試，確認新的測試失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: `step_add_can_start_doing_done_assigned_and_noted`、`update_step_needs_evidence_for_done`、`blank_evidence_counts_as_missing`、`update_step_link_writes_item_link_with_basis_ai`、`evidence_belongs_to_the_op_that_marks_done`、`add_sets_status_assignee_and_note_in_one_entry`、`step_add_history_says_how_the_step_started` FAIL。`old_logs_replay_the_same` 現在就會過（它守的是之後不能壞）。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `types/index.d.ts` 的 `step.add`：
 
@@ -1346,12 +1346,12 @@ const updateStep = guard((ctx, input) => {
     }
 ```
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `121 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -1374,7 +1374,7 @@ git commit -m "feat(plan-board): add steps with status, assignee and note; evide
 - Produces: `CardSpec.type` 多 `'action'`、`CardSpec.command?: string`；`TOOLS.add_user_action`（輸入 `action`、`why`、`command?`、`item?`、`step?`；結果文字含 `card <8 碼>`）；`ToolName` 多 `'add_user_action'`；待你處理卡的回覆用 `choice: 'done'`；`openCards` 把待你處理卡排在最前面。
 - Consumes: 無。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 `tests/tools.test.ts`：`schemas_list_required_fields` 加一行、改最後一行：
 
@@ -1468,12 +1468,12 @@ test('action_card_messages', async () => {
 })
 ```
 
-- [ ] **Step 2: 跑測試，確認新的測試失敗**
+- [x] **Step 2: 跑測試，確認新的測試失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: `schemas_list_required_fields`、`add_user_action_opens_an_action_card`、`action_cards_come_first_and_count_as_waiting`、`action_card_messages` FAIL。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `types/index.d.ts` 的 `CardSpec`：
 
@@ -1585,12 +1585,12 @@ const addUserAction = guard((ctx, input) => {
   }
 ```
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `124 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -1612,7 +1612,7 @@ git commit -m "feat(plan-board): action cards for what the user has to do"
 - Consumes: Task 14 的 `type: 'action'`、`command`、`add_user_action`、`choice: 'done'`、`openCards` 排序。
 - Produces: 按鈕鍵 `${card.id}:done`；i18n 鍵 `actionDone`、`actionWhy`、`command`、`sentChecking`、`waitingAction`、`actionOpen`。
 
-- [ ] **Step 1: 寫會失敗的測試，並改既有測試的字**
+- [x] **Step 1: 寫會失敗的測試，並改既有測試的字**
 
 `tests/pane.test.ts`，在 `const loose = …` 那行後面加（`no_ids_in_zh_tw_text` 也會用到 `ACTION`）：
 
@@ -1722,12 +1722,12 @@ test('action_card_history_line', async () => {
 ```
 
 
-- [ ] **Step 2: 跑測試，確認失敗**
+- [x] **Step 2: 跑測試，確認失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: 新的三個和改了字的既有測試 FAIL（找不到 `等你（2）`、`件事等你`、`做好了` 等）。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `hooks/i18n.ts`：
 
@@ -1972,12 +1972,12 @@ const act = ($: EngineInterface, card: Card, make: (current: Local, at: number) 
   card.blocking === true || card.type === 'action' ? sendNow($, card, make) : stage($, make)
 ```
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `127 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -2000,7 +2000,7 @@ git commit -m "feat(plan-board): action cards in the pane; one count of what wai
 - Consumes: Task 12（`step.note` 不在 `itemLog`）、Task 15 的 `cardBox`。
 - Produces: `isChatter(entry: Entry): boolean`；`type Row = { kind: 'entry'; entry: Entry } | { kind: 'fold'; key: string; entries: Entry[] }`（`entries` 新的在前，`key` 是最舊那筆的 id）；`foldHistory(history: Entry[]): Row[]`；`recentFor(plan, card, n): Row[]`；`foldText(entries: Entry[], lang: Lang): string`；窗格的按鈕鍵 `fold:${itemId}:${row.key}`、`log:${itemId}:${entry.id}`；`Local.expanded` 裡的 `fold:<entry id>`、`why:<entry id>`。
 
-- [ ] **Step 1: 寫會失敗的測試，並改既有測試**
+- [x] **Step 1: 寫會失敗的測試，並改既有測試**
 
 `tests/view.test.ts`：import 加 `foldHistory`、`isChatter`：
 
@@ -2169,12 +2169,12 @@ test('an_open_fold_stays_open_when_more_step_chatter_arrives', ZH, async ($, on)
 
 - `i18n_tables_have_the_same_keys` 的 `words` 加 `'步驟：{counts}'`、`'新增 {n} 個'`、`'做完 {n} 個'`、`'開始 {n} 個'`、`'改回還沒開始 {n} 個'`、`'改名 {n} 個'`、`'刪掉 {n} 個'`、`'移動 {n} 個'`、`'改派 {n} 個'`、`'連上文件 {n} 個'`。
 
-- [ ] **Step 2: 跑測試，確認失敗**
+- [x] **Step 2: 跑測試，確認失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: 新加的測試和改過的既有測試 FAIL（`foldHistory is not a function`、找不到 `▸ 步驟：` 等）。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `hooks/i18n.ts`：
 
@@ -2377,12 +2377,12 @@ export function forget(local: Local, plan: Plan): Local {
 }
 ```
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `132 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -2403,7 +2403,7 @@ git commit -m "feat(plan-board): fold step chatter in the history; reasons open 
 - Consumes: Task 12–16 的工具和 op 名稱：`note`、`add` 的 `status`／`to`／`note`、op 上的 `evidence`、`add_user_action`。
 - Produces: 無。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 `tests/view.test.ts`：`guide_names_every_tool` 的名單加 `'add_user_action'`；最後加：
 
@@ -2418,12 +2418,12 @@ test('guide_covers_notes_actions_evidence_and_plain_words', () => {
 })
 ```
 
-- [ ] **Step 2: 跑測試，確認失敗**
+- [x] **Step 2: 跑測試，確認失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: `guide_names_every_tool`、`guide_covers_notes_actions_evidence_and_plain_words` FAIL。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `hooks/guide.ts` 的 `GUIDE`：
 
@@ -2503,16 +2503,18 @@ Expected: `guide_names_every_tool`、`guide_covers_notes_actions_evidence_and_pl
 - 項目的變動紀錄裡，項目的改動、卡片、直接改檔的處理各自一行；連續兩筆以上的步驟變動合成一行，例如「步驟：做完 3 個、新增 2 個」，按了才展開。原因預設收起來，按那一行才顯示。
 ```
 
-- [ ] **Step 4: 跑全部檢查**
+- [x] **Step 4: 跑全部檢查**
 
 Run: `claude plugin test plugins/plan-board` → `133 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 Run: `claude plugin validate .` → 沒有錯誤。
 Run: `node --test tests-git/merge.test.ts` → `fail 0`。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board README.md README.zh-TW.md
 git commit -m "docs(plan-board): guide, README and 0.2.0 for notes, action cards and folded history"
 ```
+
+實際做法（2026-10-11）：Task 12–17 合成一個 Thoth 任務 `01M4NTC7MCV0GT8T4RC9QTTFXV`，claude-a／sonnet／high，1 輪約 7 分鐘、6 個 commit（每個 Task 一個，訊息照計畫）。審查（opus，比實作高一階）9 條 AC 全部 met、沒有其他缺陷；Thoth 重跑四條核准檢查全過。合併後 133 個外掛測試、2 個 git 合併測試（Node 24）全過。這台 Linux 是第一次 `thoth init`：四條檢查重新加過、由使用者核准；git 合併測試用 `~/.local/node24/bin/node`，因為 Ubuntu 的 Node 22 不支援直接跑 TypeScript。
