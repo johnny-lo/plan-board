@@ -20,6 +20,7 @@ export type Actions = {
   choose: (card: Card, choice: string) => unknown
   dismiss: (card: Card) => unknown
   think: (card: Card, text: string) => unknown
+  type: (card: Card, text: string) => unknown
   clear: (card: Card) => unknown
   send: () => unknown
 }
@@ -55,7 +56,8 @@ function pickText(card: Card, choice: string | undefined, lang: Lang): string {
   return choice ?? ''
 }
 
-export function paneView(elements: Elements, current: Plan, mine: Local, lang: Lang, actions: Actions) {
+/** `typing` is what each card's thought field holds now: the field is one row, so the pane echoes the whole text under it. */
+export function paneView(elements: Elements, current: Plan, mine: Local, typing: Record<string, string>, lang: Lang, actions: Actions) {
   const { Box, Text, Button } = elements
   // Mobile has no Input element; the card then offers the options alone.
   const Input = 'Input' in elements ? elements.Input : undefined
@@ -213,14 +215,21 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
         <Text wrap="wrap">{t(lang, 'yourThought', { draft: thought })}</Text>
       </Box>
     )
+    const typed = Object.hasOwn(typing, card.id) ? typing[card.id] : ''
     const noteBox = Input && (
-      <Box marginTop={1}>
+      <Box flexDirection="column" marginTop={1}>
         <Input
           key={`${card.id}:note`}
           placeholder={t(lang, isNow ? 'notePlaceholderNow' : 'notePlaceholderStaged')}
           submitLabel={t(lang, isNow ? 'noteNow' : 'noteStaged')}
+          onInput={(value: string) => actions.type(card, value)}
           onSubmit={(value: string) => actions.think(card, value)}
         />
+        {typed.trim() !== '' && (
+          <Text dimColor wrap="wrap">
+            {t(lang, 'typing', { text: typed })}
+          </Text>
+        )}
       </Box>
     )
 

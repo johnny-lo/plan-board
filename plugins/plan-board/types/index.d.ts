@@ -69,6 +69,7 @@ export type Local = { staged: Record<string, Pick>; sent: Record<string, Pick>; 
 
 declare module 'claude-code' {
   interface PluginState {
-    'plan-board': { root: string; plan: Plan; local: Local }
+    /** typing: what each card's thought field holds right now, by card id; this session only. */
+    'plan-board': { root: string; plan: Plan; local: Local; typing: Record<string, string> }
   }
 }

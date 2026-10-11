@@ -32,6 +32,7 @@ const AUTO_SEND_MS = 60_000
 const root = atom({ plugin: 'plan-board', key: 'root' } as const, '')
 const plan = atom({ plugin: 'plan-board', key: 'plan' } as const, emptyPlan())
 const local = atom({ plugin: 'plan-board', key: 'local' } as const, emptyLocal())
+const typing = atom({ plugin: 'plan-board', key: 'typing' } as const, {} as Record<string, string>)
 
 const DENY_EDIT =
   'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, add_user_action, resolve_decision, resolve_direct_edit.'
@@ -191,6 +192,13 @@ async function sendNow($: EngineInterface, card: Card, make: (current: Local, at
 const act = ($: EngineInterface, card: Card, make: (current: Local, at: number) => Local): Promise<void> =>
   card.blocking === true || card.type === 'action' ? sendNow($, card, make) : stage($, make)
 
+/** What a card's thought field holds now; an empty field drops the card. */
+const typed = ($: EngineInterface, cardId: string, text: string): Promise<unknown> =>
+  update($, typing, current => {
+    const next = Object.fromEntries(Object.entries(current).filter(([id]) => id !== cardId))
+    return text.trim() === '' ? next : { ...next, [cardId]: text }
+  })
+
 async function toggle($: EngineInterface, id: string): Promise<void> {
   const current = await read($, local)
   const expanded = current.expanded.includes(id) ? current.expanded.filter(known => known !== id) : [...current.expanded, id]
@@ -296,12 +304,17 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    paneView($.ui.resolve(e), await read($, plan), await read($, local), lang, {
+    paneView($.ui.resolve(e), await read($, plan), await read($, local), await read($, typing), lang, {
       toggle: id => toggle($, id),
       show: async view => save($, { ...(await read($, local)), view }),
       choose: (card, choice) => act($, card, (current, at) => withChoice(current, card.id, choice, at)),
       dismiss: card => act($, card, (current, at) => withDismiss(current, card.id, at)),
-      think: (card, text) => act($, card, (current, at) => withDraft(current, card.id, text, at)),
+      think: async (card, text) => {
+        // The thought is staged or sent now, so the field's echo goes.
+        await typed($, card.id, '')
+        await act($, card, (current, at) => withDraft(current, card.id, text, at))
+      },
+      type: (card, text) => typed($, card.id, text),
       clear: card => stage($, current => cleared(current, card.id)),
       send: () => sendStaged($),
     }),

@@ -981,3 +981,29 @@ test('an_open_fold_stays_open_when_more_step_chatter_arrives', ZH, async ($, on)
     await ui.unmount()
   }
 })
+
+test('a_long_thought_shows_in_full_below_the_field_while_typing', ZH, async ($, on) => {
+  const w = await start($, on, null)
+  const long = '先看 CI 用哪個，再看記憶體上限，最後問一下維運那邊有沒有偏好，這幾件事都問完再決定'
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await add($, 'Which cache?')
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: /^正在寫：/ })).toBeUndefined()
+
+    // The field is one row: what was typed is shown whole, wrapped, under it.
+    await ui.input({ key: `${id}:note`, text: long, kind: 'change' })
+    expect(await ui.find({ type: 'Text', text: `正在寫：${long}` })).toBeDefined()
+    await ui.input({ key: `${id}:note`, text: '   ', kind: 'change' })
+    expect(await ui.find({ type: 'Text', text: /^正在寫：/ })).toBeUndefined()
+
+    // Once it is staged the field's echo goes; the staged thought says it instead.
+    await ui.input({ key: `${id}:note`, text: long, kind: 'change' })
+    await ui.input({ key: `${id}:note`, text: long })
+    expect(await ui.find({ type: 'Text', text: /^正在寫：/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: `想法：${long}（待送出）` })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '先看 CI' })
+    await ui.unmount()
+  }
+})
