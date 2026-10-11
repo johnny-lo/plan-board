@@ -1,4 +1,4 @@
-import type { Basis, Change, Entry, Plan } from '../types'
+import type { Basis, Change, Entry, Plan, StepStatus } from '../types'
 import { applyEntry } from './replay.ts'
 
 export type ToolName = 'propose_change' | 'apply_change' | 'update_step' | 'add_decision' | 'resolve_decision' | 'resolve_direct_edit'
@@ -204,21 +204,35 @@ const applyChange = guard((ctx, input) => {
 
 const STATUSES = ['todo', 'doing', 'done']
 
+/** The basis and result an op that sets status done carries: its own evidence, which it must have. */
+function proofOf(raw: Obj, at: string): { basis: Basis; result?: string } {
+  const evidence = raw.evidence === undefined ? {} : raw.evidence
+  if (!isObj(evidence)) return fail(`${at}.evidence must be an object with thoth or result`)
+  const thoth = optText(evidence, 'thoth')?.trim() || undefined
+  const result = optText(evidence, 'result')?.trim() || undefined
+  if (thoth === undefined && result === undefined) {
+    return fail(`${at}: marking a step done needs evidence.thoth (a passed Thoth task id) or evidence.result (a one-line result) on that op`)
+  }
+  const proof: { basis: Basis; result?: string } = { basis: thoth !== undefined ? { type: 'thoth', task: thoth } : ai }
+  if (result !== undefined) proof.result = result
+  return proof
+}
+
+function statusOf(raw: Obj, at: string): StepStatus | undefined {
+  const status = raw.status
+  if (status === undefined) return undefined
+  if (typeof status !== 'string' || !STATUSES.includes(status)) return fail(`${at}.status must be one of ${STATUSES.join(', ')}`)
+  return status as StepStatus
+}
+
 const updateStep = guard((ctx, input) => {
   const o = objectOf(input)
+  if (o.evidence !== undefined) return fail('evidence now goes on the op that marks the step done: ops[i].evidence')
   const ops = list(o, 'ops')
   const isNotesOnly = ops.every((raw) => isObj(raw) && raw.action === 'note')
   const isBlank = o.why === undefined || (typeof o.why === 'string' && o.why.trim() === '')
   // A call that only notes where steps stand may leave out why: each note is its own reason.
   const why = isNotesOnly && isBlank ? '' : text(o, 'why')
-  let thoth: string | undefined
-  let result: string | undefined
-  if (o.evidence !== undefined) {
-    if (!isObj(o.evidence)) return fail('evidence must be an object with thoth or result')
-    thoth = optText(o.evidence, 'thoth')?.trim() || undefined
-    result = optText(o.evidence, 'result')?.trim() || undefined
-  }
-  const basis: Basis = thoth !== undefined ? { type: 'thoth', task: thoth } : ai
   const entries: Entry[] = []
   const said: string[] = []
   ops.forEach((raw, i) => {
@@ -226,35 +240,47 @@ const updateStep = guard((ctx, input) => {
     const at = `ops[${i}]`
     const field = (name: string): string => text(raw, name)
     const after = optText(raw, 'after')
+    const isDone = (raw.action === 'status' || raw.action === 'add') && raw.status === 'done'
+    if (raw.evidence !== undefined && !isDone) return fail(`${at}: evidence goes only on an op that sets status done`)
     switch (raw.action) {
       case 'add': {
         const id = ctx.newId(8)
         const item = field('item')
         const data: Obj = { item, step: { id, title: field('title') } }
         if (after !== undefined) data.after = after
-        entries.push(make(ctx, 'step.add', data, why, basis))
-        said.push(`Added step ${id} to item ${item}.`)
+        const status = statusOf(raw, at)
+        const to = optText(raw, 'to')
+        const note = optText(raw, 'note')?.trim()
+        if (status === 'done' && note) return fail(`${at}: a step added as done has no note`)
+        const proof: { basis: Basis; result?: string } = status === 'done' ? proofOf(raw, at) : { basis: ai }
+        if (status !== undefined && status !== 'todo') data.status = status
+        if (to) data.to = to
+        if (note) data.note = note
+        if (proof.result !== undefined) data.result = proof.result
+        entries.push(make(ctx, 'step.add', data, why, proof.basis))
+        const how = [status !== undefined && status !== 'todo' ? status : '', to ? `assigned to ${to}` : ''].filter((part) => part !== '')
+        said.push(`Added step ${id} to item ${item}${how.length > 0 ? ` (${how.join(', ')})` : ''}.`)
         break
       }
       case 'edit':
-        entries.push(make(ctx, 'step.edit', { step: field('step'), title: field('title') }, why, basis))
+        entries.push(make(ctx, 'step.edit', { step: field('step'), title: field('title') }, why, ai))
         said.push(`Renamed step ${field('step')}.`)
         break
       case 'remove':
-        entries.push(make(ctx, 'step.remove', { step: field('step') }, why, basis))
+        entries.push(make(ctx, 'step.remove', { step: field('step') }, why, ai))
         said.push(`Removed step ${field('step')}.`)
         break
       case 'move': {
         const data: Obj = { step: field('step'), item: field('item') }
         if (after !== undefined) data.after = after
-        entries.push(make(ctx, 'step.move', data, why, basis))
+        entries.push(make(ctx, 'step.move', data, why, ai))
         said.push(`Moved step ${field('step')} to item ${field('item')}.`)
         break
       }
       case 'assign': {
         const to = raw.to
         if (typeof to !== 'string') return fail(`${at}.to must be a string (empty to clear)`)
-        entries.push(make(ctx, 'step.assign', { step: field('step'), to }, why, basis))
+        entries.push(make(ctx, 'step.assign', { step: field('step'), to }, why, ai))
         said.push(to === '' ? `Cleared the assignee of step ${field('step')}.` : `Assigned step ${field('step')} to ${to}.`)
         break
       }
@@ -269,7 +295,6 @@ const updateStep = guard((ctx, input) => {
       case 'link': {
         const item = field('item')
         const doc = field('doc')
-        // A link is the model's own bookkeeping, whatever evidence the call carries.
         entries.push(make(ctx, 'item.link', { item, doc }, why, ai))
         said.push(`Linked ${doc} to item ${item}.`)
         break
@@ -277,13 +302,12 @@ const updateStep = guard((ctx, input) => {
       case 'status': {
         const status = raw.status
         if (typeof status !== 'string' || !STATUSES.includes(status)) return fail(`${at}.status must be one of ${STATUSES.join(', ')}`)
-        if (status === 'done' && thoth === undefined && result === undefined) {
-          return fail(`${at}: marking step ${field('step')} done needs evidence.thoth (a passed Thoth task id) or evidence.result (a one-line result)`)
-        }
-        const data: Obj = { step: field('step'), status }
-        if (result !== undefined) data.result = result
-        entries.push(make(ctx, 'step.status', data, why, basis))
-        said.push(`Set step ${field('step')} to ${status}.`)
+        const stepId = field('step')
+        const proof: { basis: Basis; result?: string } = status === 'done' ? proofOf(raw, at) : { basis: ai }
+        const data: Obj = { step: stepId, status }
+        if (proof.result !== undefined) data.result = proof.result
+        entries.push(make(ctx, 'step.status', data, why, proof.basis))
+        said.push(`Set step ${stepId} to ${status}.`)
         break
       }
       default:
@@ -419,17 +443,17 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
               step: str,
               title: str,
               after: str,
-              to: { ...str, description: 'Assignee; empty string clears it.' },
-              status: { type: 'string', enum: ['todo', 'doing', 'done'] },
+              status: { type: 'string', enum: ['todo', 'doing', 'done'], description: 'For status; on add, the status the new step starts with.' },
+              to: { ...str, description: 'Assignee; on assign an empty string clears it, on add it may be left out.' },
+              evidence: {
+                type: 'object',
+                description: 'Only on an op that sets status done (status or add), and required there.',
+                properties: { thoth: { ...str, description: 'Passed Thoth task id.' }, result: { ...str, description: 'One-line result.' } },
+              },
               note: { ...str, description: 'For note: where the step stands or who it waits on; empty string clears it.' },
             },
             required: ['action'],
           },
-        },
-        evidence: {
-          type: 'object',
-          description: 'Required when a step is set to done.',
-          properties: { thoth: { ...str, description: 'Passed Thoth task id.' }, result: { ...str, description: 'One-line result.' } },
         },
       },
       required: ['ops'],

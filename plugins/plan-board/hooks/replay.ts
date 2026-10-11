@@ -42,11 +42,16 @@ function detach(plan: Plan, stepId: string): void {
   steps.splice(steps.indexOf(stepId), 1)
 }
 
+/** What a done step is known by: the Thoth task its entry names, else the result it reports. */
+const proofOf = (entry: Entry, result: string | undefined): Step['evidence'] =>
+  entry.basis.type === 'thoth' ? { thoth: entry.basis.task } : { result }
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isString = (v: unknown): v is string => typeof v === 'string'
 const isOptString = (v: unknown): boolean => v === undefined || isString(v)
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString)
 const isItemSpec = (v: unknown): boolean => isObject(v) && isString(v.id) && isString(v.title) && isString(v.goal)
+const isStatus = (v: unknown): boolean => v === 'todo' || v === 'doing' || v === 'done'
 
 function isCardSpec(v: unknown): boolean {
   return (
@@ -82,7 +87,17 @@ function hasValidData(entry: Entry): boolean {
     case 'item.link':
       return isString(d.item) && isString(d.doc) && d.doc.trim() !== ''
     case 'step.add':
-      return isString(d.item) && isObject(d.step) && isString(d.step.id) && isString(d.step.title) && isOptString(d.after)
+      return (
+        isString(d.item) &&
+        isObject(d.step) &&
+        isString(d.step.id) &&
+        isString(d.step.title) &&
+        isOptString(d.after) &&
+        (d.status === undefined || isStatus(d.status)) &&
+        isOptString(d.to) &&
+        isOptString(d.note) &&
+        isOptString(d.result)
+      )
     case 'step.edit':
       return isString(d.step) && isString(d.title)
     case 'step.remove':
@@ -92,7 +107,7 @@ function hasValidData(entry: Entry): boolean {
     case 'step.assign':
       return isString(d.step) && isString(d.to)
     case 'step.status':
-      return isString(d.step) && (d.status === 'todo' || d.status === 'doing' || d.status === 'done') && isOptString(d.result)
+      return isString(d.step) && isStatus(d.status) && isOptString(d.result)
     case 'step.note':
       return isString(d.step) && isString(d.note)
     case 'card.open':
@@ -194,10 +209,14 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       return null
     }
     case 'step.add': {
-      const { item, step, after } = entry.data
+      const { item, step, after, status, to, note, result } = entry.data
       if (!has(plan.items, item)) return `unknown item: ${item}`
       if (has(plan.steps, step.id)) return `step exists: ${step.id}`
-      plan.steps[step.id] = { id: step.id, item, title: step.title, status: 'todo' }
+      const added: Step = { id: step.id, item, title: step.title, status: status ?? 'todo' }
+      if (to !== undefined && to !== '') added.assignee = to
+      if (added.status === 'done') added.evidence = proofOf(entry, result)
+      else if (note !== undefined && note !== '') added.note = note
+      plan.steps[step.id] = added
       insertStep(plan, item, step.id, after)
       plan.names[step.id] = step.title
       return null
@@ -239,8 +258,7 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       const target: Step = plan.steps[step]
       target.status = status
       if (status !== 'done') delete target.evidence
-      else if (entry.basis.type === 'thoth') target.evidence = { thoth: entry.basis.task }
-      else target.evidence = { result }
+      else target.evidence = proofOf(entry, result)
       // A done step waits for nothing.
       if (status === 'done') delete target.note
       return null

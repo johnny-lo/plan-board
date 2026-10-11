@@ -88,8 +88,14 @@ export function changeLine(change: Change, plan: Plan, lang: Lang, previous?: st
     }
     case 'item.reorder':
       return `${t(lang, 'kindItem')} ${t(lang, 'itemReorder')}`
-    case 'step.add':
-      return `${t(lang, 'kindStep')} ${t(lang, 'stepAdd', { step: change.data.step.title, item: name(change.data.item) })}`
+    case 'step.add': {
+      const { step, item, status, to } = change.data
+      const how: string[] = []
+      if (status === 'doing' || status === 'done') how.push(t(lang, status === 'done' ? 'stepDone' : 'stepDoing'))
+      if (to !== undefined && to !== '') how.push(assignedText(to, lang))
+      const tail = how.length === 0 ? '' : lang === 'zh-TW' ? `（${how.join('、')}）` : ` (${how.join(', ')})`
+      return `${t(lang, 'kindStep')} ${t(lang, 'stepAdd', { step: step.title, item: name(item) })}${tail}`
+    }
     case 'item.link':
       return `${t(lang, 'kindItem')} ${t(lang, 'itemLink', { item: name(change.data.item), doc: change.data.doc })}`
     case 'step.edit':

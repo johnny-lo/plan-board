@@ -148,21 +148,27 @@ test('apply_change_needs_approval_or_chat', async () => {
 
 test('update_step_needs_evidence_for_done', async () => {
   const plan = await planOf([entry('item.add', { item: item('A') }), entry('item.add', { item: item('B') }), step('A', 's1'), step('A', 's2')])
+  const run = (ops: object[], extra: object = {}) => TOOLS.update_step.run(ctxOf(plan), { why: 'finished', ops, ...extra })
+  const done = (evidence?: unknown) => ({ action: 'status', step: 's1', status: 'done', ...(evidence === undefined ? {} : { evidence }) })
 
-  const done = { action: 'status', step: 's1', status: 'done' }
-  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'finished', ops: [done] }))).toContain('evidence')
-  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'finished', ops: [done], evidence: {} }))).toContain('evidence')
+  expect(bad(run([done()]))).toContain('evidence')
+  expect(bad(run([done({})]))).toContain('evidence')
+  expect(bad(run([done('done')]))).toContain('evidence')
 
-  const thoth = good(TOOLS.update_step.run(ctxOf(plan), { why: 'finished', ops: [done], evidence: { thoth: 'T1' } }))
+  const thoth = good(run([done({ thoth: 'T1' })]))
   expect(thoth.entries.length).toBe(1)
   expect(thoth.entries[0].kind).toBe('step.status')
   expect(thoth.entries[0].basis).toEqual({ type: 'thoth', task: 'T1' })
   expect(thoth.entries[0].why).toBe('finished')
   expect(thoth.entries[0].data).toEqual({ step: 's1', status: 'done' })
 
-  const result = good(TOOLS.update_step.run(ctxOf(plan), { why: 'finished', ops: [done], evidence: { result: 'tests pass' } }))
+  const result = good(run([done({ result: 'tests pass' })]))
   expect(result.entries[0].basis).toEqual({ type: 'ai' })
   expect(result.entries[0].data).toEqual({ step: 's1', status: 'done', result: 'tests pass' })
+
+  // Evidence belongs to the op that marks the step done, never to the whole call.
+  expect(bad(run([done({ thoth: 'T1' })], { evidence: { thoth: 'T1' } }))).toContain('ops[i].evidence')
+  expect(bad(run([{ action: 'remove', step: 's1' }], { evidence: 'done' }))).toContain('evidence')
 
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'status', step: 'zzz', status: 'doing' }] }))).toContain('unknown step')
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'add', item: 'zzz', title: 't' }] }))).toContain('unknown item')
@@ -171,7 +177,6 @@ test('update_step_needs_evidence_for_done', async () => {
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'dance', step: 's1' }] }))).toContain('action')
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'status', step: 's1', status: 'finished' }] }))).toContain('status')
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'edit', step: 's1' }] }))).toContain('title')
-  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'remove', step: 's1' }], evidence: 'done' }))).toContain('evidence')
 
   const many = good(
     TOOLS.update_step.run(ctxOf(plan), {
@@ -366,10 +371,9 @@ test('apply_change_refuses_empty_or_non_item_cards', async () => {
 
 test('blank_evidence_counts_as_missing', async () => {
   const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')])
-  const done = { action: 'status', step: 's1', status: 'done' }
-  const run = (evidence: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [done], evidence })
+  const run = (evidence: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'status', step: 's1', status: 'done', evidence }] })
   expect(bad(run({ thoth: '   ' }))).toContain('evidence')
-  expect(bad(run({ result: ' 	' }))).toContain('evidence')
+  expect(bad(run({ result: ' \t' }))).toContain('evidence')
   expect(bad(run({ thoth: ' ', result: '' }))).toContain('evidence')
   const kept = good(run({ thoth: '  ', result: ' fine ' }))
   expect(kept.entries[0].basis).toEqual({ type: 'ai' })
@@ -379,7 +383,9 @@ test('blank_evidence_counts_as_missing', async () => {
 test('update_step_link_writes_item_link_with_basis_ai', async () => {
   const plan = await planOf([entry('item.add', { item: item('A') })])
   const run = (op: object, extra: object = {}) => TOOLS.update_step.run(ctxOf(plan), { why: 'spec written', ops: [op], ...extra })
-  const linked = good(run({ action: 'link', item: 'A', doc: 'docs/superpowers/specs/a.md' }, { evidence: { thoth: 'T1' } }))
+  expect(bad(run({ action: 'link', item: 'A', doc: 'docs/superpowers/specs/a.md' }, { evidence: { thoth: 'T1' } }))).toContain('ops[i].evidence')
+  expect(bad(run({ action: 'link', item: 'A', doc: 'x.md', evidence: { thoth: 'T1' } }))).toContain('only on an op that sets status done')
+  const linked = good(run({ action: 'link', item: 'A', doc: 'docs/superpowers/specs/a.md' }))
   expect(linked.entries.length).toBe(1)
   expect(linked.entries[0].kind).toBe('item.link')
   expect(linked.entries[0].data).toEqual({ item: 'A', doc: 'docs/superpowers/specs/a.md' })
@@ -429,4 +435,52 @@ test('update_step_note_needs_no_why_when_alone', async () => {
   expect(bad(run({ ops: [{ action: 'note', step: 's1' }] }))).toContain('note')
   expect(bad(run({ ops: [{ action: 'note', step: 'ghost', note: 'x' }] }))).toContain('unknown step')
   expect(JSON.stringify(TOOLS.update_step.inputSchema)).toContain('"note"')
+})
+
+test('evidence_belongs_to_the_op_that_marks_done', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1'), step('A', 's2')])
+  const run = (ops: object[]) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops })
+  const mixed = good(
+    run([
+      { action: 'edit', step: 's2', title: 'renamed' },
+      { action: 'status', step: 's1', status: 'done', evidence: { thoth: 'T1' } },
+      { action: 'add', item: 'A', title: 'new' },
+      { action: 'status', step: 's2', status: 'doing' },
+    ]),
+  )
+  expect(mixed.entries.map((e) => e.basis)).toEqual([{ type: 'ai' }, { type: 'thoth', task: 'T1' }, { type: 'ai' }, { type: 'ai' }])
+  expect(mixed.entries[3].data).toEqual({ step: 's2', status: 'doing' })
+  expect(bad(run([{ action: 'status', step: 's2', status: 'doing', evidence: { result: 'x' } }]))).toContain('only on an op that sets status done')
+  expect(bad(run([{ action: 'edit', step: 's2', title: 't', evidence: { result: 'x' } }]))).toContain('only on an op that sets status done')
+  const schema = TOOLS.update_step.inputSchema as { properties: Record<string, unknown> }
+  expect(schema.properties.evidence).toBeUndefined()
+  expect(JSON.stringify(schema)).toContain('"evidence"')
+})
+
+test('add_sets_status_assignee_and_note_in_one_entry', async () => {
+  const base = [entry('item.add', { item: item('A') })]
+  const plan = await planOf(base)
+  const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title: 'review', ...op }] })
+
+  const added = good(run({ status: 'doing', to: 'claude-b', note: ' waiting for review ' }))
+  expect(added.entries.length).toBe(1)
+  const id = (added.entries[0].data as { step: { id: string } }).step.id
+  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'review' }, status: 'doing', to: 'claude-b', note: 'waiting for review' })
+  expect(added.message).toContain('(doing, assigned to claude-b)')
+  const after = await replay(await nextText(await logText(base), added.entries, []))
+  expect(after.steps[id]).toEqual({ id, item: 'A', title: 'review', status: 'doing', assignee: 'claude-b', note: 'waiting for review' })
+
+  const done = good(run({ status: 'done', evidence: { thoth: 'T9' } }))
+  expect(done.entries[0].basis).toEqual({ type: 'thoth', task: 'T9' })
+  expect(done.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, status: 'done' })
+  const reported = good(run({ status: 'done', evidence: { result: 'already merged' } }))
+  expect(reported.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, status: 'done', result: 'already merged' })
+
+  // todo and an empty assignee are what a plain add means; they are not written.
+  expect(good(run({ status: 'todo', to: '' })).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' } })
+  expect(bad(run({ status: 'done' }))).toContain('evidence')
+  expect(bad(run({ status: 'done', note: 'x', evidence: { result: 'ok' } }))).toContain('no note')
+  expect(bad(run({ status: 'doing', evidence: { result: 'ok' } }))).toContain('only on an op that sets status done')
+  expect(bad(run({ status: 'finished' }))).toContain('status')
+  expect(bad(run({ to: 3 }))).toContain('to')
 })

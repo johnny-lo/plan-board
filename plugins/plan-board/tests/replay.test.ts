@@ -263,3 +263,36 @@ test('step_note_is_set_cleared_and_dropped_when_done', async () => {
   expect(later.steps.s2.note).toBeUndefined()
   expect(later.steps.s2.status).toBe('done')
 })
+
+test('step_add_can_start_doing_done_assigned_and_noted', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, status: 'doing', to: 'claude-b', note: 'in review' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' }, status: 'done' }, { basis: { type: 'thoth', task: 'T2' } }),
+      entry('step.add', { item: 'A', step: { id: 's3', title: 'three' }, status: 'done', result: 'ok' }),
+      entry('step.add', { item: 'A', step: { id: 's4', title: 'four' }, status: 'finished' }),
+    ]),
+  )
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'doing', assignee: 'claude-b', note: 'in review' })
+  expect(plan.steps.s2.evidence).toEqual({ thoth: 'T2' })
+  expect(plan.steps.s3.evidence).toEqual({ result: 'ok' })
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['malformed entry: bad data for step.add'])
+})
+
+test('old_logs_replay_the_same', async () => {
+  // Lines written before 0.2.0, with what the old call-wide evidence left behind.
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' } }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+      entry('step.edit', { step: 's2', title: 'two v2' }, { basis: { type: 'thoth', task: 'T1' } }),
+      entry('step.status', { step: 's1', status: 'done' }, { basis: { type: 'thoth', task: 'T1' } }),
+      entry('step.status', { step: 's2', status: 'doing', result: 'ok' }, { basis: { type: 'thoth', task: 'T1' } }),
+    ]),
+  )
+  expect(plan.skipped).toEqual([])
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'done', evidence: { thoth: 'T1' } })
+  expect(plan.steps.s2).toEqual({ id: 's2', item: 'A', title: 'two v2', status: 'doing' })
+})

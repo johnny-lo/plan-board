@@ -709,6 +709,22 @@ test('item_link_history_names_the_item_and_the_path', async () => {
   expect(en).toContain(PLAN)
 })
 
+test('step_add_history_says_how_the_step_started', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item(A, '看板', 'g') }),
+      entry('step.add', { item: A, step: { id: S1, title: '審查' }, status: 'doing', to: 'claude-b' }),
+      entry('step.add', { item: A, step: { id: S2, title: '定格式' }, status: 'done', to: ULID }, { basis: { type: 'thoth', task: 'T1' } }),
+      entry('step.add', { item: A, step: { id: S3, title: '寫 README' } }),
+    ]),
+  )
+  const zh = plan.applied.slice(1).map(e => historyLines(e, plan, 'zh-TW')[0])
+  expect(zh[0]).toContain('新增「審查」到「看板」（進行中、派給 claude-b）')
+  expect(zh[1]).toContain('新增「定格式」到「看板」（做完、派給 Thoth 任務） · Thoth pass')
+  expect(zh[2]).toMatch(/新增「寫 README」到「看板」$/)
+  expect(historyLines(plan.applied[1], plan, 'en')[0]).toContain('added "審查" to "看板" (in progress, assigned to claude-b)')
+})
+
 test('i18n_tables_have_the_same_keys', () => {
   const en = keysOf('en')
   const zh = keysOf('zh-TW')

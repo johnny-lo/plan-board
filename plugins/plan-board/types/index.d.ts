@@ -15,7 +15,7 @@ export type ItemChange =
   | { kind: 'item.edit'; data: { item: string; title?: string; goal?: string } }
   | { kind: 'item.reorder'; data: { order: string[] } }
 export type StepChange =
-  | { kind: 'step.add'; data: { item: string; step: StepSpec; after?: string } }
+  | { kind: 'step.add'; data: { item: string; step: StepSpec; after?: string; status?: StepStatus; to?: string; note?: string; result?: string } }
   | { kind: 'step.edit'; data: { step: string; title: string } }
   | { kind: 'step.remove'; data: { step: string } }
   | { kind: 'step.move'; data: { step: string; item: string; after?: string } }
