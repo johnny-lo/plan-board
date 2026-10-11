@@ -309,11 +309,12 @@ test('schemas_list_required_fields', () => {
   expect(required('update_step')).toEqual(['ops'])
   expect(required('resolve_decision')).toEqual(expect.arrayContaining(['card', 'outcome']))
   expect(required('resolve_direct_edit')).toEqual(expect.arrayContaining(['action', 'summary']))
+  expect(required('add_user_action')).toEqual(['action', 'why'])
   for (const tool of Object.values(TOOLS)) {
     expect(tool.description.length).toBeGreaterThan(10)
     expect((tool.inputSchema as { type: string }).type).toBe('object')
   }
-  expect(Object.keys(TOOLS).sort()).toEqual(['add_decision', 'apply_change', 'propose_change', 'resolve_decision', 'resolve_direct_edit', 'update_step'])
+  expect(Object.keys(TOOLS).sort()).toEqual(['add_decision', 'add_user_action', 'apply_change', 'propose_change', 'resolve_decision', 'resolve_direct_edit', 'update_step'])
 })
 
 test('entries_of_one_call_replay_in_written_order', async () => {
@@ -483,4 +484,44 @@ test('add_sets_status_assignee_and_note_in_one_entry', async () => {
   expect(bad(run({ status: 'doing', evidence: { result: 'ok' } }))).toContain('only on an op that sets status done')
   expect(bad(run({ status: 'finished' }))).toContain('status')
   expect(bad(run({ to: 3 }))).toContain('to')
+})
+
+test('add_user_action_opens_an_action_card', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), entry('item.add', { item: item('B') }), step('A', 's1')])
+  const run = (input: object) => TOOLS.add_user_action.run(ctxOf(plan), input)
+  const opened = good(
+    run({ action: 'Run thoth checks approve in your terminal', why: 'new checks need a human', command: 'thoth checks approve', item: 'A', step: 's1' }),
+  )
+  expect(opened.entries.length).toBe(1)
+  expect(opened.entries[0].kind).toBe('card.open')
+  const card = (opened.entries[0].data as { card: { id: string } }).card
+  expect(card).toEqual({
+    id: card.id,
+    type: 'action',
+    question: 'Run thoth checks approve in your terminal',
+    why: 'new checks need a human',
+    options: [],
+    item: 'A',
+    step: 's1',
+    command: 'thoth checks approve',
+  })
+  expect(card.id).toMatch(HEX8)
+  expect(opened.message).toContain(`card ${card.id}`)
+
+  const bare = good(run({ action: 'Log in to GitHub', why: 'the push needs it' }))
+  expect((bare.entries[0].data as { card: object }).card).toEqual({ id: expect.any(String), type: 'action', question: 'Log in to GitHub', why: 'the push needs it', options: [] })
+  // The step alone names its item.
+  expect((good(run({ action: 'x', why: 'y', step: 's1' })).entries[0].data as { card: { item?: string } }).card.item).toBe('A')
+
+  expect(bad(run({ why: 'y' }))).toContain('action')
+  expect(bad(run({ action: 'x' }))).toContain('why')
+  expect(bad(run({ action: 'x', why: 'y', command: '  ' }))).toContain('command')
+  expect(bad(run({ action: 'x', why: 'y', item: 'ghost' }))).toContain('unknown item')
+  expect(bad(run({ action: 'x', why: 'y', item: 'B', step: 's1' }))).toContain('not in item')
+
+  const withCard = await planOf([entry('card.open', { card: { id: 'a1', type: 'action', question: 'Log in', why: 'w', options: [], command: 'gh auth login' } })])
+  expect(withCard.cards.a1.type).toBe('action')
+  expect(withCard.cards.a1.command).toBe('gh auth login')
+  expect(bad(TOOLS.apply_change.run(ctxOf(withCard, ['a1']), { card: 'a1' }))).toContain('not a proposal')
+  good(TOOLS.resolve_decision.run(ctxOf(withCard), { card: 'a1', outcome: 'logged in' }))
 })

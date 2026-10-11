@@ -57,9 +57,10 @@ function isCardSpec(v: unknown): boolean {
   return (
     isObject(v) &&
     isString(v.id) &&
-    (v.type === 'question' || v.type === 'proposal') &&
+    (v.type === 'question' || v.type === 'proposal' || v.type === 'action') &&
     isOptString(v.item) &&
     isOptString(v.step) &&
+    isOptString(v.command) &&
     isString(v.question) &&
     isString(v.why) &&
     Array.isArray(v.options) &&

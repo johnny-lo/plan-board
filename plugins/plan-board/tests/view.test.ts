@@ -262,3 +262,17 @@ test('summary_shows_a_step_note', async () => {
   )
   expect(summary(plan, emptyLocal)).toContain('- [s1] s1 — todo, note: waiting for review')
 })
+
+test('action_cards_come_first_and_count_as_waiting', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      card('c-block', { item: 'A', blocking: true }),
+      card('c-a', { item: 'A' }),
+      card('act', { type: 'action' }),
+    ]),
+  )
+  expect(openCards(plan).map(c => c.id)).toEqual(['act', 'c-block', 'c-a'])
+  expect(bandCounts(plan, emptyLocal).waiting).toBe(3)
+  expect(summary(plan, emptyLocal)).toContain('- [act] q-act {action}')
+})

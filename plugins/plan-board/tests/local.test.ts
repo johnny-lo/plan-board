@@ -120,3 +120,19 @@ test('as_local_survives_garbage', () => {
   const good = { staged: { a: { choice: 'x', at: 1 } }, sent: {}, expanded: ['a'], view: 'cards' as const }
   expect(asLocal(JSON.parse(JSON.stringify(good)))).toEqual(good)
 })
+
+test('action_card_messages', async () => {
+  const plan = await planOf(
+    entry('card.open', { card: { id: 'a1', type: 'action', question: 'Run thoth checks approve', why: 'w', options: [], command: 'thoth checks approve' } }),
+  )
+  const card = plan.cards.a1
+  expect(blockingMessage(card, { choice: 'done', at: 1 })).toBe(
+    'Done by the user: "Run thoth checks approve" [a1]. Check it if you can, then resolve the card with resolve_decision.',
+  )
+  expect(blockingMessage(card, { choice: 'done', draft: 'it asked twice', at: 1 })).toContain('\nthought: it asked twice')
+  expect(blockingMessage(card, { isDismissed: true, at: 1 })).toContain('dismissed (resolve it: the user skipped this card)')
+  expect(blockingMessage(card, { draft: 'no access', at: 1 }).startsWith('My thoughts on "Run thoth checks approve" [a1]: no access')).toBe(true)
+  expect(batchMessage(plan, [['a1', { choice: 'done', at: 1 }]])).toContain(
+    '- [a1] Run thoth checks approve → done (check it if you can, then resolve the card with resolve_decision)',
+  )
+})

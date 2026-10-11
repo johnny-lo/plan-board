@@ -110,6 +110,7 @@ export function isApproved(local: Local, cardId: string): boolean {
 function verdict(card: Card | undefined, pick: Pick): string {
   if (pick.isDismissed === true) return 'dismissed (resolve it: the user skipped this card)'
   if (pick.choice === undefined) return '(no option picked)'
+  if (card?.type === 'action' && pick.choice === 'done') return 'done (check it if you can, then resolve the card with resolve_decision)'
   if (card?.type === 'proposal') {
     if (pick.choice === 'approve') return 'approve (call apply_change with this card)'
     if (pick.choice === 'reject') return 'reject (resolve it as rejected)'
@@ -134,6 +135,10 @@ export function blockingMessage(card: Card, pick: Pick): string {
   const hasDraft = pick.draft !== undefined && pick.draft !== ''
   if (pick.choice === undefined && pick.isDismissed !== true && hasDraft) {
     return `My thoughts on "${card.question}" [${card.id}]: ${pick.draft}\n(If this settles it, resolve the card; otherwise reply and keep it open.)`
+  }
+  if (card.type === 'action' && pick.choice === 'done') {
+    const done = `Done by the user: "${card.question}" [${card.id}]. Check it if you can, then resolve the card with resolve_decision.`
+    return hasDraft ? `${done}\nthought: ${pick.draft}` : done
   }
   const text = `Decision made for "${card.question}" [${card.id}]: ${verdict(card, pick)}`
   return hasDraft ? `${text}\nthought: ${pick.draft}` : text

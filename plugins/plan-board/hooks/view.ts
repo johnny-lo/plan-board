@@ -25,6 +25,8 @@ export function openCards(plan: Plan): Card[] {
   return Object.values(plan.cards)
     .filter(card => card.resolved === undefined)
     .sort((a, b) => {
+      // What the user has to do comes before what they have to decide.
+      if ((a.type === 'action') !== (b.type === 'action')) return a.type === 'action' ? -1 : 1
       if (Boolean(a.blocking) !== Boolean(b.blocking)) return a.blocking ? -1 : 1
       const byItem = position(a) - position(b)
       if (byItem !== 0) return byItem

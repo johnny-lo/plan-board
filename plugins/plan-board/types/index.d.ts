@@ -27,8 +27,10 @@ export type StepChange =
 export type LinkChange = { kind: 'item.link'; data: { item: string; doc: string } }
 export type CardOption = { label: string; effect: string; recommended?: boolean; reason?: string }
 export type CardSpec = {
-  id: string; type: 'question' | 'proposal'; item?: string; step?: string
+  id: string; type: 'question' | 'proposal' | 'action'; item?: string; step?: string
   question: string; why: string; options: CardOption[]; blocking?: boolean; changes?: ItemChange[]
+  /** For an action card: the command the user runs, word for word. */
+  command?: string
 }
 export type CardChange =
   | { kind: 'card.open'; data: { card: CardSpec } }

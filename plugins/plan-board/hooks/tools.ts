@@ -1,7 +1,7 @@
 import type { Basis, Change, Entry, Plan, StepStatus } from '../types'
 import { applyEntry } from './replay.ts'
 
-export type ToolName = 'propose_change' | 'apply_change' | 'update_step' | 'add_decision' | 'resolve_decision' | 'resolve_direct_edit'
+export type ToolName = 'propose_change' | 'apply_change' | 'update_step' | 'add_decision' | 'add_user_action' | 'resolve_decision' | 'resolve_direct_edit'
 export type ToolContext = { plan: Plan; now: string; newId: (length: 8 | 12) => string; isApproved: (cardId: string) => boolean }
 export type ToolResult = { ok: true; entries: Entry[]; drop: string[]; message: string } | { ok: false; error: string }
 
@@ -175,7 +175,7 @@ const applyChange = guard((ctx, input) => {
   const chat = optText(o, 'chat')
   if (!has(ctx.plan.cards, cardId)) return fail(`unknown card: ${cardId}`)
   const card = ctx.plan.cards[cardId]
-  if (card.type !== 'proposal') return fail(`card ${cardId} is a question, not a proposal; close it with resolve_decision`)
+  if (card.type !== 'proposal') return fail(`card ${cardId} is not a proposal; close it with resolve_decision`)
   if (card.resolved !== undefined) return fail(`card ${cardId} is already resolved`)
   const changes = Array.isArray(card.changes) ? card.changes : []
   if (changes.length === 0) return fail(`card ${cardId} holds no changes to apply; close it with resolve_decision`)
@@ -345,6 +345,23 @@ const addDecision = guard((ctx, input) => {
   return accept(ctx, [make(ctx, 'card.open', { card }, why, ai)], `Opened card ${card.id}; the user will answer in the pane.`)
 })
 
+// ---- add_user_action ----
+
+const addUserAction = guard((ctx, input) => {
+  const o = objectOf(input)
+  const action = text(o, 'action')
+  const why = text(o, 'why')
+  const command = optText(o, 'command')
+  if (command !== undefined && command.trim() === '') return fail('command must be a non-empty string when given')
+  const step = optText(o, 'step')
+  const itemId = checkRefs(ctx.plan, optText(o, 'item'), step)
+  const card: Obj = { id: ctx.newId(8), type: 'action', question: action, why, options: [] }
+  if (itemId !== undefined) card.item = itemId
+  if (step !== undefined) card.step = step
+  if (command !== undefined) card.command = command
+  return accept(ctx, [make(ctx, 'card.open', { card }, why, ai)], `Opened action card ${card.id}; the user will mark it done in the pane.`)
+})
+
 // ---- resolve_decision ----
 
 const resolveDecision = guard((ctx, input) => {
@@ -490,8 +507,24 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
     },
     run: addDecision,
   },
+  add_user_action: {
+    description:
+      'Ask the user to do something themselves (run a command in their terminal, approve something, log in), shown as a card they mark done in the pane.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { ...str, description: 'One line: what the user has to do.' },
+        why: { ...str, description: 'Why it is needed now.' },
+        command: { ...str, description: 'The command to run, word for word, when there is one.' },
+        item: str,
+        step: str,
+      },
+      required: ['action', 'why'],
+    },
+    run: addUserAction,
+  },
   resolve_decision: {
-    description: 'Close a decision card the user has answered, recording the outcome.',
+    description: 'Close a decision card or an action card the user has answered, recording the outcome.',
     inputSchema: {
       type: 'object',
       properties: { card: str, outcome: { ...str, description: 'What was decided.' } },
