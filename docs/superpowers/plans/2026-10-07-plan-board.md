@@ -594,3 +594,1925 @@ test('i18n_tables_have_the_same_keys')
 - [x] **Step 3**：`/plan init` 失敗的回覆改用對照表、不帶原始錯誤、照實說做到哪一步（spec 14.2）。
 
 實際做法（2026-10-10）：Thoth 任務 `01M4K1Q2Z5YJGFKH4AWN62XR73`，claude-a／sonnet／high，2 輪。第 1 輪八項要求都過，但退回三點：型別錯誤（`commitText` 多了 `'moved'`）、`/plan init` 補行時整份寫回會蓋掉別的 session 剛加的行、「留著本機那份」和「`.gitattributes` 沒改成」同時發生時回覆沒提後者。第 2 輪三點都修好、各有測試；合併後 112 個外掛測試和 2 個 git 合併測試全過。
+
+---
+
+## 試用回饋（spec 15，2026-10-11 加）
+
+**Goal:** 照 spec 15 改 plan-board：步驟備註、待你處理卡、新增步驟時一起設定、證據跟著動作走、變動紀錄收合。
+
+**Architecture:** 跟前面一樣：規則放在純模組（replay、tools、view、lines、local、guide、i18n），各自有單元測試；`pane.tsx` 畫面、`register.tsx` 接線。新的紀錄種類只有 `step.note`；`step.add` 多幾個可選欄位；卡片多一種 `type: 'action'`。舊的紀錄一行都不改。
+
+**Spec:** `docs/superpowers/specs/2026-10-07-plan-board-design.md` 第 15 節（決定的來由在 spec 開頭和 `plan/log.jsonl` 的卡片紀錄）。
+
+**順序：** Task 12 → 17 依序做，後面的 Task 會用到前面加的型別和函式。每個 Task 結束時全部測試都要過。
+
+### 追加的 Global Constraints
+
+前面的 Global Constraints 全部照舊，另外：
+
+- 畫面上的新文字照下面各 Task 寫的字一字不差（中英兩份對照表的鍵和 `{slot}` 要一樣，`i18n_tables_have_the_same_keys` 會檢查）。
+- 給 AI 的文字（工具結果、錯誤、送給 AI 的訊息、說明）一律英文。
+- 外掛版本 `0.2.0`（Task 17）。
+- 開始前的基準：`claude plugin test plugins/plan-board` 是 `112 pass`、`0 fail`（2026-10-11 實測）。
+
+### 追加的 Review Focus
+
+1. **舊的 log**（0.2.0 以前寫的，包括舊 bug 留下的「`doing` 帶 `result`」「改名帶 Thoth 依據」）重算出來的計畫跟現在一樣。測試在 Task 13（`old_logs_replay_the_same`）。
+2. **只有空白的備註**當成清掉，不會留下一個空白的備註。測試在 Task 12（`update_step_note_needs_no_why_when_alone`）。
+3. **已經展開的「▸ 步驟：…」那一行，之後又有新的步驟瑣事接上來**，要維持展開。測試在 Task 16（`an_open_fold_stays_open_when_more_step_chatter_arrives`）。
+4. **Claude 正在工作時按「做好了」**，一樣立刻送出，不等這輪結束。測試在 Task 15（`action_card_shows_the_command_and_done_goes_out_at_once`）。
+5. **展開狀態指到的紀錄不在了**（被 `drop`、或換了分支），要忘掉，不能一直累積。測試在 Task 16（`forget_keeps_open_history_rows_of_entries_still_in_the_log`）。
+
+---
+
+### Task 12: 步驟備註（spec 15.1）
+
+**Files:**
+- Modify: `plugins/plan-board/types/index.d.ts`
+- Modify: `plugins/plan-board/hooks/replay.ts`
+- Modify: `plugins/plan-board/hooks/tools.ts`（`updateStep`、`TOOLS.update_step.inputSchema`）
+- Modify: `plugins/plan-board/hooks/guide.ts`（`summary`）
+- Modify: `plugins/plan-board/hooks/lines.ts`（`changeLine`）
+- Modify: `plugins/plan-board/hooks/i18n.ts`
+- Modify: `plugins/plan-board/hooks/pane.tsx`（總表的步驟那一行）
+- Test: `plugins/plan-board/tests/replay.test.ts`、`tests/tools.test.ts`、`tests/view.test.ts`、`tests/pane.test.ts`
+
+**Interfaces:**
+- Produces: `Step.note?: string`；紀錄種類 `{ kind: 'step.note'; data: { step: string; note: string } }`；`update_step` 的 op `{ action: 'note', step, note }`；`update_step` 的 `why` 在全部 op 都是 `note` 時可以不給；i18n 鍵 `stepNote`。
+- Consumes: 無。
+
+- [ ] **Step 1: 寫會失敗的測試**
+
+`tests/replay.test.ts` 最後加：
+
+```ts
+test('step_note_is_set_cleared_and_dropped_when_done', async () => {
+  const entries = [
+    entry('item.add', { item: item('A') }),
+    entry('step.add', { item: 'A', step: { id: 's1', title: 'one' } }),
+    entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+    entry('step.note', { step: 's1', note: 'waiting for review' }),
+    entry('step.note', { step: 's2', note: 'waiting for CI' }),
+    entry('step.status', { step: 's2', status: 'doing' }),
+    entry('step.note', { step: 'ghost', note: 'x' }),
+  ]
+  const plan = await replay(await logText(entries))
+  expect(plan.steps.s1.note).toBe('waiting for review')
+  expect(plan.steps.s2.note).toBe('waiting for CI')
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['unknown step: ghost'])
+  // A note is where a step stands now, not a change the user reads back.
+  expect(plan.itemLog.A.some((e) => e.kind === 'step.note')).toBe(false)
+
+  const later = await replay(
+    await logText([
+      ...entries.slice(0, 6),
+      entry('step.note', { step: 's1', note: '' }),
+      entry('step.status', { step: 's2', status: 'done', result: 'ok' }),
+    ]),
+  )
+  expect(later.steps.s1.note).toBeUndefined()
+  expect(later.steps.s2.note).toBeUndefined()
+  expect(later.steps.s2.status).toBe('done')
+})
+```
+
+`tests/tools.test.ts` 最後加：
+
+```ts
+test('update_step_note_needs_no_why_when_alone', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1'), step('A', 's2')])
+  const run = (input: object) => TOOLS.update_step.run(ctxOf(plan), input)
+
+  const noted = good(run({ ops: [{ action: 'note', step: 's1', note: ' waiting for review ' }, { action: 'note', step: 's2', note: '   ' }] }))
+  expect(noted.entries.map((e) => e.kind)).toEqual(['step.note', 'step.note'])
+  expect(noted.entries.map((e) => e.data)).toEqual([{ step: 's1', note: 'waiting for review' }, { step: 's2', note: '' }])
+  expect(noted.entries.map((e) => e.why)).toEqual(['waiting for review', 'note cleared'])
+  expect(noted.entries.every((e) => e.basis.type === 'ai')).toBe(true)
+  expect(noted.message).toContain('s1')
+
+  const explained = good(run({ why: 'review started', ops: [{ action: 'note', step: 's1', note: 'in review' }] }))
+  expect(explained.entries[0].why).toBe('review started')
+  good(run({ why: '  ', ops: [{ action: 'note', step: 's1', note: 'in review' }] }))
+
+  expect(bad(run({ ops: [{ action: 'note', step: 's1', note: 'x' }, { action: 'status', step: 's2', status: 'doing' }] }))).toContain('why')
+  expect(bad(run({ ops: [{ action: 'note', step: 's1' }] }))).toContain('note')
+  expect(bad(run({ ops: [{ action: 'note', step: 'ghost', note: 'x' }] }))).toContain('unknown step')
+  expect(JSON.stringify(TOOLS.update_step.inputSchema)).toContain('"note"')
+})
+```
+
+同一個檔案的 `schemas_list_required_fields`，把
+
+```ts
+  expect(required('update_step')).toEqual(expect.arrayContaining(['why', 'ops']))
+```
+
+改成
+
+```ts
+  // why may be left out when every op is a note; the tool checks the rest.
+  expect(required('update_step')).toEqual(['ops'])
+```
+
+`tests/view.test.ts` 最後加：
+
+```ts
+test('summary_shows_a_step_note', async () => {
+  const plan = await replay(
+    await logText([entry('item.add', { item: item('A') }), step('A', 's1'), entry('step.note', { step: 's1', note: 'waiting for review' })]),
+  )
+  expect(summary(plan, emptyLocal)).toContain('- [s1] s1 — todo, note: waiting for review')
+})
+```
+
+`tests/pane.test.ts` 在 `history_shows_the_old_name_of_a_rename` 前面加：
+
+```ts
+test('a_step_note_shows_beside_the_step_but_not_in_the_history', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), entry('step.note', { step: S2, note: '等 Thoth 審查' })])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ type: 'Text', text: '等 Thoth 審查' })).toBeDefined()
+    const seen = await texts(ui)
+    expect(seen.filter(text => text.includes('等 Thoth 審查'))).toHaveLength(1)
+    await ui.unmount()
+  }
+})
+```
+
+- [ ] **Step 2: 跑測試，確認新的測試失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: 上面 5 個測試 FAIL（例如 `unsupported kind: step.note`、`ops[0].action must be one of …`、`why is required`），其餘照舊 pass。
+
+- [ ] **Step 3: 實作**
+
+`types/index.d.ts`：`StepChange` 加一種，`Step` 加 `note`：
+
+```ts
+  | { kind: 'step.status'; data: { step: string; status: StepStatus; result?: string } }
+  /** Where a step stands now; an empty note clears it. Never shown in the change history. */
+  | { kind: 'step.note'; data: { step: string; note: string } }
+```
+
+```ts
+export type Step = { id: string; item: string; title: string; status: StepStatus; assignee?: string; note?: string; evidence?: { thoth?: string; result?: string } }
+```
+
+`hooks/replay.ts`：
+
+`hasValidData` 的 `case 'step.status'` 後面加：
+
+```ts
+    case 'step.note':
+      return isString(d.step) && isString(d.note)
+```
+
+`applyEntry` 的 `case 'step.status'` 改成（做完時清掉備註）：
+
+```ts
+    case 'step.status': {
+      const { step, status, result } = entry.data
+      if (!has(plan.steps, step)) return `unknown step: ${step}`
+      const target: Step = plan.steps[step]
+      target.status = status
+      if (status !== 'done') delete target.evidence
+      else if (entry.basis.type === 'thoth') target.evidence = { thoth: entry.basis.task }
+      else target.evidence = { result }
+      // A done step waits for nothing.
+      if (status === 'done') delete target.note
+      return null
+    }
+    case 'step.note': {
+      const { step, note } = entry.data
+      if (!has(plan.steps, step)) return `unknown step: ${step}`
+      if (note === '') delete plan.steps[step].note
+      else plan.steps[step].note = note
+      return null
+    }
+```
+
+`replay()` 迴圈最後，把
+
+```ts
+    plan.applied.push(entry)
+    for (const id of new Set([...before, ...touchedAfter(entry)])) (plan.itemLog[id] ??= []).push(entry)
+```
+
+改成
+
+```ts
+    plan.applied.push(entry)
+    // A note is where a step stands now, not a change the user reads back.
+    if (entry.kind === 'step.note') continue
+    for (const id of new Set([...before, ...touchedAfter(entry)])) (plan.itemLog[id] ??= []).push(entry)
+```
+
+`hooks/tools.ts` 的 `updateStep` 開頭，把
+
+```ts
+  const o = objectOf(input)
+  const why = text(o, 'why')
+  const ops = list(o, 'ops')
+```
+
+改成
+
+```ts
+  const o = objectOf(input)
+  const ops = list(o, 'ops')
+  const isNotesOnly = ops.every((raw) => isObj(raw) && raw.action === 'note')
+  const isBlank = o.why === undefined || (typeof o.why === 'string' && o.why.trim() === '')
+  // A call that only notes where steps stand may leave out why: each note is its own reason.
+  const why = isNotesOnly && isBlank ? '' : text(o, 'why')
+```
+
+`switch (raw.action)` 裡 `case 'link'` 前面加：
+
+```ts
+      case 'note': {
+        if (typeof raw.note !== 'string') return fail(`${at}.note must be a string (empty to clear)`)
+        const note = raw.note.trim()
+        const stepId = field('step')
+        entries.push(make(ctx, 'step.note', { step: stepId, note }, why || (note === '' ? 'note cleared' : note), ai))
+        said.push(note === '' ? `Cleared the note of step ${stepId}.` : `Noted step ${stepId}.`)
+        break
+      }
+```
+
+`default` 的錯誤訊息改成 `` `${at}.action must be one of add, edit, remove, move, assign, status, note, link` ``。
+
+`TOOLS.update_step` 改四個地方（最外層的 `evidence` 這個 Task 不動，Task 13 才拿掉）：
+
+1. `description` 換成：
+
+   ```ts
+       description:
+         'Add, edit, remove, move, assign, note or set the status of steps, or link a document (a path from the repo root, such as a superpowers spec or plan) to an item, recording why.',
+   ```
+
+2. `why` 換成：
+
+   ```ts
+           why: { ...str, description: 'One-line reason for the change; may be left out when every op is a note.' },
+   ```
+
+3. `ops.items.properties` 的 `action` 換成下面第一行，並在 `status` 後面加 `note`：
+
+   ```ts
+                 action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'note', 'link'] },
+   ```
+
+   ```ts
+                 note: { ...str, description: 'For note: where the step stands or who it waits on; empty string clears it.' },
+   ```
+
+4. 最外層的 `required: ['why', 'ops']` 換成 `required: ['ops']`。
+
+`hooks/guide.ts` 的 `summary`，派給誰那一行後面加：
+
+```ts
+      if (step.assignee !== undefined) line += `, assigned to ${step.assignee}`
+      if (step.note !== undefined) line += `, note: ${step.note}`
+```
+
+`hooks/i18n.ts`：`EN` 在 `stepStatus` 後面加 `stepNote: '"{step}" note: {note}',`；`ZH_TW` 加 `stepNote: '「{step}」備註：{note}',`。
+
+`hooks/lines.ts` 的 `changeLine`，`case 'step.status'` 後面加（變動紀錄不會用到它，但每一種紀錄都要有一句話）：
+
+```ts
+    case 'step.note':
+      return `${t(lang, 'kindStep')} ${t(lang, 'stepNote', { step: name(change.data.step), note: change.data.note })}`
+```
+
+`hooks/pane.tsx` 總表的步驟那一行，派給誰後面加備註：
+
+```tsx
+                          {step.assignee !== undefined && <Text dimColor>{assignedText(step.assignee, lang)}</Text>}
+                          {step.note !== undefined && <Text dimColor>{step.note}</Text>}
+                          {note !== '' && <Text dimColor>{note}</Text>}
+```
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `116 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): step notes that stay out of the change history"
+```
+
+---
+
+### Task 13: 新增步驟時一起設定；證據跟著動作走（spec 15.3、15.4）
+
+**Files:**
+- Modify: `plugins/plan-board/types/index.d.ts`
+- Modify: `plugins/plan-board/hooks/replay.ts`
+- Modify: `plugins/plan-board/hooks/tools.ts`（`updateStep`、`TOOLS.update_step`）
+- Modify: `plugins/plan-board/hooks/lines.ts`（`changeLine` 的 `step.add`）
+- Test: `tests/replay.test.ts`、`tests/tools.test.ts`、`tests/pane.test.ts`
+
+**Interfaces:**
+- Consumes: Task 12 的 `Step.note`、`note` op。
+- Produces: `step.add` 的 `data` 多 `status?: StepStatus`、`to?: string`、`note?: string`、`result?: string`；`update_step` 的 op 多 `evidence?: { thoth?: string; result?: string }`，整次呼叫的 `evidence` 拒絕。
+
+- [ ] **Step 1: 寫會失敗的測試**
+
+`tests/replay.test.ts` 最後加：
+
+```ts
+test('step_add_can_start_doing_done_assigned_and_noted', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, status: 'doing', to: 'claude-b', note: 'in review' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' }, status: 'done' }, { basis: { type: 'thoth', task: 'T2' } }),
+      entry('step.add', { item: 'A', step: { id: 's3', title: 'three' }, status: 'done', result: 'ok' }),
+      entry('step.add', { item: 'A', step: { id: 's4', title: 'four' }, status: 'finished' }),
+    ]),
+  )
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'doing', assignee: 'claude-b', note: 'in review' })
+  expect(plan.steps.s2.evidence).toEqual({ thoth: 'T2' })
+  expect(plan.steps.s3.evidence).toEqual({ result: 'ok' })
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['malformed entry: bad data for step.add'])
+})
+
+test('old_logs_replay_the_same', async () => {
+  // Lines written before 0.2.0, with what the old call-wide evidence left behind.
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' } }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+      entry('step.edit', { step: 's2', title: 'two v2' }, { basis: { type: 'thoth', task: 'T1' } }),
+      entry('step.status', { step: 's1', status: 'done' }, { basis: { type: 'thoth', task: 'T1' } }),
+      entry('step.status', { step: 's2', status: 'doing', result: 'ok' }, { basis: { type: 'thoth', task: 'T1' } }),
+    ]),
+  )
+  expect(plan.skipped).toEqual([])
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'done', evidence: { thoth: 'T1' } })
+  expect(plan.steps.s2).toEqual({ id: 's2', item: 'A', title: 'two v2', status: 'doing' })
+})
+```
+
+`tests/tools.test.ts`：整個 `update_step_needs_evidence_for_done` 換成：
+
+```ts
+test('update_step_needs_evidence_for_done', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), entry('item.add', { item: item('B') }), step('A', 's1'), step('A', 's2')])
+  const run = (ops: object[], extra: object = {}) => TOOLS.update_step.run(ctxOf(plan), { why: 'finished', ops, ...extra })
+  const done = (evidence?: unknown) => ({ action: 'status', step: 's1', status: 'done', ...(evidence === undefined ? {} : { evidence }) })
+
+  expect(bad(run([done()]))).toContain('evidence')
+  expect(bad(run([done({})]))).toContain('evidence')
+  expect(bad(run([done('done')]))).toContain('evidence')
+
+  const thoth = good(run([done({ thoth: 'T1' })]))
+  expect(thoth.entries.length).toBe(1)
+  expect(thoth.entries[0].kind).toBe('step.status')
+  expect(thoth.entries[0].basis).toEqual({ type: 'thoth', task: 'T1' })
+  expect(thoth.entries[0].why).toBe('finished')
+  expect(thoth.entries[0].data).toEqual({ step: 's1', status: 'done' })
+
+  const result = good(run([done({ result: 'tests pass' })]))
+  expect(result.entries[0].basis).toEqual({ type: 'ai' })
+  expect(result.entries[0].data).toEqual({ step: 's1', status: 'done', result: 'tests pass' })
+
+  // Evidence belongs to the op that marks the step done, never to the whole call.
+  expect(bad(run([done({ thoth: 'T1' })], { evidence: { thoth: 'T1' } }))).toContain('ops[i].evidence')
+  expect(bad(run([{ action: 'remove', step: 's1' }], { evidence: 'done' }))).toContain('evidence')
+
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'status', step: 'zzz', status: 'doing' }] }))).toContain('unknown step')
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'add', item: 'zzz', title: 't' }] }))).toContain('unknown item')
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: '', ops: [{ action: 'remove', step: 's1' }] }))).toContain('why')
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [] }))).toContain('ops')
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'dance', step: 's1' }] }))).toContain('action')
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'status', step: 's1', status: 'finished' }] }))).toContain('status')
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'edit', step: 's1' }] }))).toContain('title')
+
+  const many = good(
+    TOOLS.update_step.run(ctxOf(plan), {
+      why: 'reshuffle',
+      ops: [
+        { action: 'add', item: 'A', title: 'new step', after: 's1' },
+        { action: 'edit', step: 's1', title: 'renamed' },
+        { action: 'move', step: 's2', item: 'B' },
+        { action: 'assign', step: 's1', to: 'claude-b' },
+        { action: 'status', step: 's1', status: 'doing' },
+        { action: 'remove', step: 's2' },
+      ],
+    }),
+  )
+  expect(many.entries.map((e) => e.kind)).toEqual(['step.add', 'step.edit', 'step.move', 'step.assign', 'step.status', 'step.remove'])
+  const added = many.entries[0]
+  if (added.kind !== 'step.add') throw new Error('unreachable')
+  expect(added.data.step.id).toMatch(HEX8)
+  expect(added.data).toEqual({ item: 'A', step: { id: added.data.step.id, title: 'new step' }, after: 's1' })
+  expect(many.message).toContain(added.data.step.id)
+  expect(many.message).toContain('A')
+  expect(new Set(many.entries.map((e) => e.id)).size).toBe(6)
+  expect(many.entries.every((e) => e.why === 'reshuffle')).toBe(true)
+})
+```
+
+整個 `blank_evidence_counts_as_missing` 換成：
+
+```ts
+test('blank_evidence_counts_as_missing', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')])
+  const run = (evidence: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'status', step: 's1', status: 'done', evidence }] })
+  expect(bad(run({ thoth: '   ' }))).toContain('evidence')
+  expect(bad(run({ result: ' \t' }))).toContain('evidence')
+  expect(bad(run({ thoth: ' ', result: '' }))).toContain('evidence')
+  const kept = good(run({ thoth: '  ', result: ' fine ' }))
+  expect(kept.entries[0].basis).toEqual({ type: 'ai' })
+  expect(kept.entries[0].data).toEqual({ step: 's1', status: 'done', result: 'fine' })
+})
+```
+
+`update_step_link_writes_item_link_with_basis_ai` 的前兩行，把
+
+```ts
+  const linked = good(run({ action: 'link', item: 'A', doc: 'docs/superpowers/specs/a.md' }, { evidence: { thoth: 'T1' } }))
+```
+
+改成
+
+```ts
+  expect(bad(run({ action: 'link', item: 'A', doc: 'docs/superpowers/specs/a.md' }, { evidence: { thoth: 'T1' } }))).toContain('ops[i].evidence')
+  expect(bad(run({ action: 'link', item: 'A', doc: 'x.md', evidence: { thoth: 'T1' } }))).toContain('only on an op that sets status done')
+  const linked = good(run({ action: 'link', item: 'A', doc: 'docs/superpowers/specs/a.md' }))
+```
+
+最後加兩個測試：
+
+```ts
+test('evidence_belongs_to_the_op_that_marks_done', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1'), step('A', 's2')])
+  const run = (ops: object[]) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops })
+  const mixed = good(
+    run([
+      { action: 'edit', step: 's2', title: 'renamed' },
+      { action: 'status', step: 's1', status: 'done', evidence: { thoth: 'T1' } },
+      { action: 'add', item: 'A', title: 'new' },
+      { action: 'status', step: 's2', status: 'doing' },
+    ]),
+  )
+  expect(mixed.entries.map((e) => e.basis)).toEqual([{ type: 'ai' }, { type: 'thoth', task: 'T1' }, { type: 'ai' }, { type: 'ai' }])
+  expect(mixed.entries[3].data).toEqual({ step: 's2', status: 'doing' })
+  expect(bad(run([{ action: 'status', step: 's2', status: 'doing', evidence: { result: 'x' } }]))).toContain('only on an op that sets status done')
+  expect(bad(run([{ action: 'edit', step: 's2', title: 't', evidence: { result: 'x' } }]))).toContain('only on an op that sets status done')
+  const schema = TOOLS.update_step.inputSchema as { properties: Record<string, unknown> }
+  expect(schema.properties.evidence).toBeUndefined()
+  expect(JSON.stringify(schema)).toContain('"evidence"')
+})
+
+test('add_sets_status_assignee_and_note_in_one_entry', async () => {
+  const base = [entry('item.add', { item: item('A') })]
+  const plan = await planOf(base)
+  const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title: 'review', ...op }] })
+
+  const added = good(run({ status: 'doing', to: 'claude-b', note: ' waiting for review ' }))
+  expect(added.entries.length).toBe(1)
+  const id = (added.entries[0].data as { step: { id: string } }).step.id
+  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'review' }, status: 'doing', to: 'claude-b', note: 'waiting for review' })
+  expect(added.message).toContain('(doing, assigned to claude-b)')
+  const after = await replay(await nextText(await logText(base), added.entries, []))
+  expect(after.steps[id]).toEqual({ id, item: 'A', title: 'review', status: 'doing', assignee: 'claude-b', note: 'waiting for review' })
+
+  const done = good(run({ status: 'done', evidence: { thoth: 'T9' } }))
+  expect(done.entries[0].basis).toEqual({ type: 'thoth', task: 'T9' })
+  expect(done.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, status: 'done' })
+  const reported = good(run({ status: 'done', evidence: { result: 'already merged' } }))
+  expect(reported.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, status: 'done', result: 'already merged' })
+
+  // todo and an empty assignee are what a plain add means; they are not written.
+  expect(good(run({ status: 'todo', to: '' })).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' } })
+  expect(bad(run({ status: 'done' }))).toContain('evidence')
+  expect(bad(run({ status: 'done', note: 'x', evidence: { result: 'ok' } }))).toContain('no note')
+  expect(bad(run({ status: 'doing', evidence: { result: 'ok' } }))).toContain('only on an op that sets status done')
+  expect(bad(run({ status: 'finished' }))).toContain('status')
+  expect(bad(run({ to: 3 }))).toContain('to')
+})
+```
+
+`tests/pane.test.ts` 在 `item_link_history_names_the_item_and_the_path` 後面加：
+
+```ts
+test('step_add_history_says_how_the_step_started', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item(A, '看板', 'g') }),
+      entry('step.add', { item: A, step: { id: S1, title: '審查' }, status: 'doing', to: 'claude-b' }),
+      entry('step.add', { item: A, step: { id: S2, title: '定格式' }, status: 'done', to: ULID }, { basis: { type: 'thoth', task: 'T1' } }),
+      entry('step.add', { item: A, step: { id: S3, title: '寫 README' } }),
+    ]),
+  )
+  const zh = plan.applied.slice(1).map(e => historyLines(e, plan, 'zh-TW')[0])
+  expect(zh[0]).toContain('新增「審查」到「看板」（進行中、派給 claude-b）')
+  expect(zh[1]).toContain('新增「定格式」到「看板」（做完、派給 Thoth 任務） · Thoth pass')
+  expect(zh[2]).toMatch(/新增「寫 README」到「看板」$/)
+  expect(historyLines(plan.applied[1], plan, 'en')[0]).toContain('added "審查" to "看板" (in progress, assigned to claude-b)')
+})
+```
+
+- [ ] **Step 2: 跑測試，確認新的測試失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: `step_add_can_start_doing_done_assigned_and_noted`、`update_step_needs_evidence_for_done`、`blank_evidence_counts_as_missing`、`update_step_link_writes_item_link_with_basis_ai`、`evidence_belongs_to_the_op_that_marks_done`、`add_sets_status_assignee_and_note_in_one_entry`、`step_add_history_says_how_the_step_started` FAIL。`old_logs_replay_the_same` 現在就會過（它守的是之後不能壞）。
+
+- [ ] **Step 3: 實作**
+
+`types/index.d.ts` 的 `step.add`：
+
+```ts
+  | { kind: 'step.add'; data: { item: string; step: StepSpec; after?: string; status?: StepStatus; to?: string; note?: string; result?: string } }
+```
+
+`hooks/replay.ts`：
+
+`isItemSpec` 下面加：
+
+```ts
+const isStatus = (v: unknown): boolean => v === 'todo' || v === 'doing' || v === 'done'
+```
+
+`hasValidData` 的 `step.add`、`step.status` 改成：
+
+```ts
+    case 'step.add':
+      return (
+        isString(d.item) &&
+        isObject(d.step) &&
+        isString(d.step.id) &&
+        isString(d.step.title) &&
+        isOptString(d.after) &&
+        (d.status === undefined || isStatus(d.status)) &&
+        isOptString(d.to) &&
+        isOptString(d.note) &&
+        isOptString(d.result)
+      )
+```
+
+```ts
+    case 'step.status':
+      return isString(d.step) && isStatus(d.status) && isOptString(d.result)
+```
+
+`detach` 下面加：
+
+```ts
+/** What a done step is known by: the Thoth task its entry names, else the result it reports. */
+const proofOf = (entry: Entry, result: string | undefined): Step['evidence'] =>
+  entry.basis.type === 'thoth' ? { thoth: entry.basis.task } : { result }
+```
+
+`applyEntry` 的 `step.add`：
+
+```ts
+    case 'step.add': {
+      const { item, step, after, status, to, note, result } = entry.data
+      if (!has(plan.items, item)) return `unknown item: ${item}`
+      if (has(plan.steps, step.id)) return `step exists: ${step.id}`
+      const added: Step = { id: step.id, item, title: step.title, status: status ?? 'todo' }
+      if (to !== undefined && to !== '') added.assignee = to
+      if (added.status === 'done') added.evidence = proofOf(entry, result)
+      else if (note !== undefined && note !== '') added.note = note
+      plan.steps[step.id] = added
+      insertStep(plan, item, step.id, after)
+      plan.names[step.id] = step.title
+      return null
+    }
+```
+
+`step.status` 裡的兩行 `else if (entry.basis.type === 'thoth') … else target.evidence = { result }` 換成 `else target.evidence = proofOf(entry, result)`。
+
+`hooks/tools.ts`：
+
+`STATUSES` 下面加：
+
+```ts
+/** The basis and result an op that sets status done carries: its own evidence, which it must have. */
+function proofOf(raw: Obj, at: string): { basis: Basis; result?: string } {
+  const evidence = raw.evidence === undefined ? {} : raw.evidence
+  if (!isObj(evidence)) return fail(`${at}.evidence must be an object with thoth or result`)
+  const thoth = optText(evidence, 'thoth')?.trim() || undefined
+  const result = optText(evidence, 'result')?.trim() || undefined
+  if (thoth === undefined && result === undefined) {
+    return fail(`${at}: marking a step done needs evidence.thoth (a passed Thoth task id) or evidence.result (a one-line result) on that op`)
+  }
+  const proof: { basis: Basis; result?: string } = { basis: thoth !== undefined ? { type: 'thoth', task: thoth } : ai }
+  if (result !== undefined) proof.result = result
+  return proof
+}
+
+function statusOf(raw: Obj, at: string): StepStatus | undefined {
+  const status = raw.status
+  if (status === undefined) return undefined
+  if (typeof status !== 'string' || !STATUSES.includes(status)) return fail(`${at}.status must be one of ${STATUSES.join(', ')}`)
+  return status as StepStatus
+}
+```
+
+（檔案開頭的 type import 加上 `StepStatus`：`import type { Basis, Change, Entry, Plan, StepStatus } from '../types'`。）
+
+`updateStep` 整個換成：
+
+```ts
+const updateStep = guard((ctx, input) => {
+  const o = objectOf(input)
+  if (o.evidence !== undefined) return fail('evidence now goes on the op that marks the step done: ops[i].evidence')
+  const ops = list(o, 'ops')
+  const isNotesOnly = ops.every((raw) => isObj(raw) && raw.action === 'note')
+  const isBlank = o.why === undefined || (typeof o.why === 'string' && o.why.trim() === '')
+  // A call that only notes where steps stand may leave out why: each note is its own reason.
+  const why = isNotesOnly && isBlank ? '' : text(o, 'why')
+  const entries: Entry[] = []
+  const said: string[] = []
+  ops.forEach((raw, i) => {
+    if (!isObj(raw)) return fail(`ops[${i}] must be an object`)
+    const at = `ops[${i}]`
+    const field = (name: string): string => text(raw, name)
+    const after = optText(raw, 'after')
+    const isDone = (raw.action === 'status' || raw.action === 'add') && raw.status === 'done'
+    if (raw.evidence !== undefined && !isDone) return fail(`${at}: evidence goes only on an op that sets status done`)
+    switch (raw.action) {
+      case 'add': {
+        const id = ctx.newId(8)
+        const item = field('item')
+        const data: Obj = { item, step: { id, title: field('title') } }
+        if (after !== undefined) data.after = after
+        const status = statusOf(raw, at)
+        const to = optText(raw, 'to')
+        const note = optText(raw, 'note')?.trim()
+        if (status === 'done' && note) return fail(`${at}: a step added as done has no note`)
+        const proof: { basis: Basis; result?: string } = status === 'done' ? proofOf(raw, at) : { basis: ai }
+        if (status !== undefined && status !== 'todo') data.status = status
+        if (to) data.to = to
+        if (note) data.note = note
+        if (proof.result !== undefined) data.result = proof.result
+        entries.push(make(ctx, 'step.add', data, why, proof.basis))
+        const how = [status !== undefined && status !== 'todo' ? status : '', to ? `assigned to ${to}` : ''].filter((part) => part !== '')
+        said.push(`Added step ${id} to item ${item}${how.length > 0 ? ` (${how.join(', ')})` : ''}.`)
+        break
+      }
+      case 'edit':
+        entries.push(make(ctx, 'step.edit', { step: field('step'), title: field('title') }, why, ai))
+        said.push(`Renamed step ${field('step')}.`)
+        break
+      case 'remove':
+        entries.push(make(ctx, 'step.remove', { step: field('step') }, why, ai))
+        said.push(`Removed step ${field('step')}.`)
+        break
+      case 'move': {
+        const data: Obj = { step: field('step'), item: field('item') }
+        if (after !== undefined) data.after = after
+        entries.push(make(ctx, 'step.move', data, why, ai))
+        said.push(`Moved step ${field('step')} to item ${field('item')}.`)
+        break
+      }
+      case 'assign': {
+        const to = raw.to
+        if (typeof to !== 'string') return fail(`${at}.to must be a string (empty to clear)`)
+        entries.push(make(ctx, 'step.assign', { step: field('step'), to }, why, ai))
+        said.push(to === '' ? `Cleared the assignee of step ${field('step')}.` : `Assigned step ${field('step')} to ${to}.`)
+        break
+      }
+      case 'note': {
+        if (typeof raw.note !== 'string') return fail(`${at}.note must be a string (empty to clear)`)
+        const note = raw.note.trim()
+        const stepId = field('step')
+        entries.push(make(ctx, 'step.note', { step: stepId, note }, why || (note === '' ? 'note cleared' : note), ai))
+        said.push(note === '' ? `Cleared the note of step ${stepId}.` : `Noted step ${stepId}.`)
+        break
+      }
+      case 'link': {
+        const item = field('item')
+        const doc = field('doc')
+        entries.push(make(ctx, 'item.link', { item, doc }, why, ai))
+        said.push(`Linked ${doc} to item ${item}.`)
+        break
+      }
+      case 'status': {
+        const status = raw.status
+        if (typeof status !== 'string' || !STATUSES.includes(status)) return fail(`${at}.status must be one of ${STATUSES.join(', ')}`)
+        const stepId = field('step')
+        const proof: { basis: Basis; result?: string } = status === 'done' ? proofOf(raw, at) : { basis: ai }
+        const data: Obj = { step: stepId, status }
+        if (proof.result !== undefined) data.result = proof.result
+        entries.push(make(ctx, 'step.status', data, why, proof.basis))
+        said.push(`Set step ${stepId} to ${status}.`)
+        break
+      }
+      default:
+        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, note, link`)
+    }
+  })
+  return accept(ctx, entries, said.join(' '))
+})
+```
+
+`to: 3` 會在 `optText(raw, 'to')` 擋下：`to must be a string`。
+
+`TOOLS.update_step.inputSchema`：拿掉最外層的 `evidence`；`ops.items.properties` 加：
+
+```ts
+              status: { type: 'string', enum: ['todo', 'doing', 'done'], description: 'For status; on add, the status the new step starts with.' },
+              to: { ...str, description: 'Assignee; on assign an empty string clears it, on add it may be left out.' },
+              evidence: {
+                type: 'object',
+                description: 'Only on an op that sets status done (status or add), and required there.',
+                properties: { thoth: { ...str, description: 'Passed Thoth task id.' }, result: { ...str, description: 'One-line result.' } },
+              },
+```
+
+`hooks/lines.ts` 的 `changeLine`，`case 'step.add'` 換成：
+
+```ts
+    case 'step.add': {
+      const { step, item, status, to } = change.data
+      const how: string[] = []
+      if (status === 'doing' || status === 'done') how.push(t(lang, status === 'done' ? 'stepDone' : 'stepDoing'))
+      if (to !== undefined && to !== '') how.push(assignedText(to, lang))
+      const tail = how.length === 0 ? '' : lang === 'zh-TW' ? `（${how.join('、')}）` : ` (${how.join(', ')})`
+      return `${t(lang, 'kindStep')} ${t(lang, 'stepAdd', { step: step.title, item: name(item) })}${tail}`
+    }
+```
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `121 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): add steps with status, assignee and note; evidence goes on its op"
+```
+
+---
+
+### Task 14: 待你處理卡的資料、工具、送給 AI 的訊息（spec 15.2）
+
+**Files:**
+- Modify: `plugins/plan-board/types/index.d.ts`
+- Modify: `plugins/plan-board/hooks/replay.ts`（`isCardSpec`）
+- Modify: `plugins/plan-board/hooks/tools.ts`（新工具 `add_user_action`、`apply_change` 的訊息、`resolve_decision` 的說明）
+- Modify: `plugins/plan-board/hooks/view.ts`（`openCards` 排序）
+- Modify: `plugins/plan-board/hooks/local.ts`（`verdict`、`blockingMessage`）
+- Test: `tests/tools.test.ts`、`tests/view.test.ts`、`tests/local.test.ts`
+
+**Interfaces:**
+- Produces: `CardSpec.type` 多 `'action'`、`CardSpec.command?: string`；`TOOLS.add_user_action`（輸入 `action`、`why`、`command?`、`item?`、`step?`；結果文字含 `card <8 碼>`）；`ToolName` 多 `'add_user_action'`；待你處理卡的回覆用 `choice: 'done'`；`openCards` 把待你處理卡排在最前面。
+- Consumes: 無。
+
+- [ ] **Step 1: 寫會失敗的測試**
+
+`tests/tools.test.ts`：`schemas_list_required_fields` 加一行、改最後一行：
+
+```ts
+  expect(required('add_user_action')).toEqual(['action', 'why'])
+```
+
+```ts
+  expect(Object.keys(TOOLS).sort()).toEqual(['add_decision', 'add_user_action', 'apply_change', 'propose_change', 'resolve_decision', 'resolve_direct_edit', 'update_step'])
+```
+
+最後加：
+
+```ts
+test('add_user_action_opens_an_action_card', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), entry('item.add', { item: item('B') }), step('A', 's1')])
+  const run = (input: object) => TOOLS.add_user_action.run(ctxOf(plan), input)
+  const opened = good(
+    run({ action: 'Run thoth checks approve in your terminal', why: 'new checks need a human', command: 'thoth checks approve', item: 'A', step: 's1' }),
+  )
+  expect(opened.entries.length).toBe(1)
+  expect(opened.entries[0].kind).toBe('card.open')
+  const card = (opened.entries[0].data as { card: { id: string } }).card
+  expect(card).toEqual({
+    id: card.id,
+    type: 'action',
+    question: 'Run thoth checks approve in your terminal',
+    why: 'new checks need a human',
+    options: [],
+    item: 'A',
+    step: 's1',
+    command: 'thoth checks approve',
+  })
+  expect(card.id).toMatch(HEX8)
+  expect(opened.message).toContain(`card ${card.id}`)
+
+  const bare = good(run({ action: 'Log in to GitHub', why: 'the push needs it' }))
+  expect((bare.entries[0].data as { card: object }).card).toEqual({ id: expect.any(String), type: 'action', question: 'Log in to GitHub', why: 'the push needs it', options: [] })
+  // The step alone names its item.
+  expect((good(run({ action: 'x', why: 'y', step: 's1' })).entries[0].data as { card: { item?: string } }).card.item).toBe('A')
+
+  expect(bad(run({ why: 'y' }))).toContain('action')
+  expect(bad(run({ action: 'x' }))).toContain('why')
+  expect(bad(run({ action: 'x', why: 'y', command: '  ' }))).toContain('command')
+  expect(bad(run({ action: 'x', why: 'y', item: 'ghost' }))).toContain('unknown item')
+  expect(bad(run({ action: 'x', why: 'y', item: 'B', step: 's1' }))).toContain('not in item')
+
+  const withCard = await planOf([entry('card.open', { card: { id: 'a1', type: 'action', question: 'Log in', why: 'w', options: [], command: 'gh auth login' } })])
+  expect(withCard.cards.a1.type).toBe('action')
+  expect(withCard.cards.a1.command).toBe('gh auth login')
+  expect(bad(TOOLS.apply_change.run(ctxOf(withCard, ['a1']), { card: 'a1' }))).toContain('not a proposal')
+  good(TOOLS.resolve_decision.run(ctxOf(withCard), { card: 'a1', outcome: 'logged in' }))
+})
+```
+
+`tests/view.test.ts` 最後加：
+
+```ts
+test('action_cards_come_first_and_count_as_waiting', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      card('c-block', { item: 'A', blocking: true }),
+      card('c-a', { item: 'A' }),
+      card('act', { type: 'action' }),
+    ]),
+  )
+  expect(openCards(plan).map(c => c.id)).toEqual(['act', 'c-block', 'c-a'])
+  expect(bandCounts(plan, emptyLocal).waiting).toBe(3)
+  expect(summary(plan, emptyLocal)).toContain('- [act] q-act {action}')
+})
+```
+
+`tests/local.test.ts` 最後加：
+
+```ts
+test('action_card_messages', async () => {
+  const plan = await planOf(
+    entry('card.open', { card: { id: 'a1', type: 'action', question: 'Run thoth checks approve', why: 'w', options: [], command: 'thoth checks approve' } }),
+  )
+  const card = plan.cards.a1
+  expect(blockingMessage(card, { choice: 'done', at: 1 })).toBe(
+    'Done by the user: "Run thoth checks approve" [a1]. Check it if you can, then resolve the card with resolve_decision.',
+  )
+  expect(blockingMessage(card, { choice: 'done', draft: 'it asked twice', at: 1 })).toContain('\nthought: it asked twice')
+  expect(blockingMessage(card, { isDismissed: true, at: 1 })).toContain('dismissed (resolve it: the user skipped this card)')
+  expect(blockingMessage(card, { draft: 'no access', at: 1 }).startsWith('My thoughts on "Run thoth checks approve" [a1]: no access')).toBe(true)
+  expect(batchMessage(plan, [['a1', { choice: 'done', at: 1 }]])).toContain(
+    '- [a1] Run thoth checks approve → done (check it if you can, then resolve the card with resolve_decision)',
+  )
+})
+```
+
+- [ ] **Step 2: 跑測試，確認新的測試失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: `schemas_list_required_fields`、`add_user_action_opens_an_action_card`、`action_cards_come_first_and_count_as_waiting`、`action_card_messages` FAIL。
+
+- [ ] **Step 3: 實作**
+
+`types/index.d.ts` 的 `CardSpec`：
+
+```ts
+export type CardSpec = {
+  id: string; type: 'question' | 'proposal' | 'action'; item?: string; step?: string
+  question: string; why: string; options: CardOption[]; blocking?: boolean; changes?: ItemChange[]
+  /** For an action card: the command the user runs, word for word. */
+  command?: string
+}
+```
+
+`hooks/replay.ts` 的 `isCardSpec`：
+
+```ts
+    (v.type === 'question' || v.type === 'proposal' || v.type === 'action') &&
+    isOptString(v.item) &&
+    isOptString(v.step) &&
+    isOptString(v.command) &&
+```
+
+`hooks/tools.ts`：
+
+`ToolName` 加 `'add_user_action'`：
+
+```ts
+export type ToolName = 'propose_change' | 'apply_change' | 'update_step' | 'add_decision' | 'add_user_action' | 'resolve_decision' | 'resolve_direct_edit'
+```
+
+`applyChange` 裡
+
+```ts
+  if (card.type !== 'proposal') return fail(`card ${cardId} is a question, not a proposal; close it with resolve_decision`)
+```
+
+改成
+
+```ts
+  if (card.type !== 'proposal') return fail(`card ${cardId} is not a proposal; close it with resolve_decision`)
+```
+
+`addDecision` 後面加：
+
+```ts
+// ---- add_user_action ----
+
+const addUserAction = guard((ctx, input) => {
+  const o = objectOf(input)
+  const action = text(o, 'action')
+  const why = text(o, 'why')
+  const command = optText(o, 'command')
+  if (command !== undefined && command.trim() === '') return fail('command must be a non-empty string when given')
+  const step = optText(o, 'step')
+  const itemId = checkRefs(ctx.plan, optText(o, 'item'), step)
+  const card: Obj = { id: ctx.newId(8), type: 'action', question: action, why, options: [] }
+  if (itemId !== undefined) card.item = itemId
+  if (step !== undefined) card.step = step
+  if (command !== undefined) card.command = command
+  return accept(ctx, [make(ctx, 'card.open', { card }, why, ai)], `Opened action card ${card.id}; the user will mark it done in the pane.`)
+})
+```
+
+`TOOLS` 在 `add_decision` 後面加：
+
+```ts
+  add_user_action: {
+    description:
+      'Ask the user to do something themselves (run a command in their terminal, approve something, log in), shown as a card they mark done in the pane.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { ...str, description: 'One line: what the user has to do.' },
+        why: { ...str, description: 'Why it is needed now.' },
+        command: { ...str, description: 'The command to run, word for word, when there is one.' },
+        item: str,
+        step: str,
+      },
+      required: ['action', 'why'],
+    },
+    run: addUserAction,
+  },
+```
+
+`resolve_decision` 的 `description` 改成 `'Close a decision card or an action card the user has answered, recording the outcome.'`。
+
+`hooks/view.ts` 的 `openCards` 排序，最前面加一行：
+
+```ts
+    .sort((a, b) => {
+      // What the user has to do comes before what they have to decide.
+      if ((a.type === 'action') !== (b.type === 'action')) return a.type === 'action' ? -1 : 1
+      if (Boolean(a.blocking) !== Boolean(b.blocking)) return a.blocking ? -1 : 1
+```
+
+`hooks/local.ts`：
+
+`verdict` 在 `if (pick.choice === undefined) …` 後面加：
+
+```ts
+  if (card?.type === 'action' && pick.choice === 'done') return 'done (check it if you can, then resolve the card with resolve_decision)'
+```
+
+`blockingMessage` 在想法那個 `if` 後面加：
+
+```ts
+  if (card.type === 'action' && pick.choice === 'done') {
+    const done = `Done by the user: "${card.question}" [${card.id}]. Check it if you can, then resolve the card with resolve_decision.`
+    return hasDraft ? `${done}\nthought: ${pick.draft}` : done
+  }
+```
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `124 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): action cards for what the user has to do"
+```
+
+---
+
+### Task 15: 待你處理卡的畫面、輸入框上方那列（spec 15.2）
+
+**Files:**
+- Modify: `plugins/plan-board/hooks/i18n.ts`
+- Modify: `plugins/plan-board/hooks/pane.tsx`（`cardBox`、總表的步驟那一行）
+- Modify: `plugins/plan-board/hooks/lines.ts`（`card.open` 的那句話）
+- Modify: `plugins/plan-board/hooks/register.tsx`（`act`、`DENY_EDIT`）
+- Test: `tests/pane.test.ts`
+
+**Interfaces:**
+- Consumes: Task 14 的 `type: 'action'`、`command`、`add_user_action`、`choice: 'done'`、`openCards` 排序。
+- Produces: 按鈕鍵 `${card.id}:done`；i18n 鍵 `actionDone`、`actionWhy`、`command`、`sentChecking`、`waitingAction`、`actionOpen`。
+
+- [ ] **Step 1: 寫會失敗的測試，並改既有測試的字**
+
+`tests/pane.test.ts`，在 `const loose = …` 那行後面加（`no_ids_in_zh_tw_text` 也會用到 `ACTION`）：
+
+```ts
+const ACTION = '在終端機跑 thoth checks approve'
+const addAction = async ($: Engine, extra: Record<string, unknown> = {}) => {
+  const added = await $.tool.call({ tool: tool('add_user_action'), action: ACTION, why: '新的檢查要人核准才會跑', command: 'thoth checks approve', ...extra })
+  return /card (\w{8})/.exec(String(added.result))?.[1] as string
+}
+```
+
+最後加：
+
+```ts
+test('action_card_shows_the_command_and_done_goes_out_at_once', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), blockedOnS2()])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await addAction($, { item: B, step: S2 })
+    const ui = await pane($, surface)
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（2）' })).toBeDefined()
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ text: `等你處理：${ACTION}` })).toBeDefined()
+    expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
+
+    await ui.press({ key: 'view:cards' })
+    // The action card comes first and opens by itself; the question waits closed.
+    expect(await ui.find({ type: 'Text', text: '為什麼：新的檢查要人核准才會跑' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '指令：thoth checks approve' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: `${id}:done`, text: '做好了' })).toBeDefined()
+    expect(await ui.find({ key: `${id}:note` })).toBeDefined()
+    expect(await ui.find({ key: `${id}:x` })).toBeDefined()
+    expect(await ui.find({ key: `${Q1}:0` })).toBeUndefined()
+    expect(await ui.find({ text: '之前：' })).toBeUndefined()
+
+    // Claude is working: a done still goes out at once.
+    await $.turn.start({ text: 'working', turnId: 't1' })
+    await ui.press({ key: `${id}:done` })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]).toContain(`Done by the user: "${ACTION}" [${id}]`)
+    expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
+    expect(await ui.find({ key: 'send' })).toBeUndefined()
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+    const line = await band($, surface)
+    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 件事等你')
+    await line.unmount()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '檢查已核准' })
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+
+test('action_card_skip_and_thought_go_out_at_once', ZH, async ($, on) => {
+  const w = await start($, on, null)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await addAction($)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: '其他' })).toBeDefined()
+    await ui.input({ key: `${id}:note`, text: '我沒有權限' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted[0]).toContain(`My thoughts on "${ACTION}"`)
+    expect(await ui.find({ key: `${id}:done` })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '你的想法：我沒有權限' })).toBeDefined()
+
+    await ui.press({ key: `${id}:x` })
+    await until(ui, () => w.submitted.length > 1)
+    expect(w.submitted[1]).toContain('dismissed')
+    expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '使用者略過' })
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+
+test('action_card_history_line', async () => {
+  const plan = await replay(
+    await logText([entry('card.open', { card: { id: Q0, type: 'action', question: ACTION, why: 'w', options: [], command: 'thoth checks approve' } })]),
+  )
+  expect(historyLines(plan.applied[0], plan, 'zh-TW')[0]).toContain(`卡片 請你「${ACTION}」`)
+  expect(historyLines(plan.applied[0], plan, 'en')[0]).toContain(`Card asked you to "${ACTION}"`)
+})
+```
+
+既有測試改字（意思不變，只是 spec 15.2 改了用語）：
+
+- `cards_view_expands_only_the_first`：`'等你決定（2）'` → `'等你（2）'`。
+- `proposal_card_lists_changes_and_approve_is_staged`：`'✓ 目前沒有待你決定的事'` → `'✓ 目前沒有等你的事'`。
+- `band_text_and_edit_warning`：三個 `個決定等你` 都改成 `件事等你`。
+- `empty_repo_shows_hint_and_engine_band`：`'✓ 目前沒有待你決定的事'` → `'✓ 目前沒有等你的事'`；`'等你決定（0）'` → `'等你（0）'`。
+- `thought_only_card_stays_interactive_after_sending`：`'等你決定（1）'` → `'等你（1）'`、`'等你決定（0）'` → `'等你（0）'`；兩個 `個決定等你` 改成 `件事等你`。
+- `a_blocking_thought_leaves_the_card_open_but_a_dismissal_dims_it`：`'等你決定（1）'` → `'等你（1）'`。
+- `i18n_tables_have_the_same_keys`：`words` 裡 `'等你決定（{n}）'` → `'等你（{n}）'`、`'✓ 目前沒有待你決定的事'` → `'✓ 目前沒有等你的事'`、`'計畫：{doing} 項進行中 · {waiting} 個決定等你'` → `'計畫：{doing} 項進行中 · {waiting} 件事等你'`，再加上 `'做好了'`、`'為什麼：{why}'`、`'指令：{command}'`、`'已送出，等 AI 確認'`、`'等你處理：{question}'`、`'請你「{question}」'`；最後那行 `toBe('等你決定（3）')` → `toBe('等你（3）')`。
+- `no_ids_in_zh_tw_text`：`blockedOnS2(),` 前面加一張待你處理卡，`cards` 改成以它開頭：
+
+```ts
+    entry('card.open', {
+      card: { id: '5a5a5a5a', type: 'action', item: B, step: S2, question: ACTION, why: '新的檢查要人核准', options: [], command: 'thoth checks approve' },
+    }),
+```
+
+```ts
+  const cards = ['5a5a5a5a', Q1, Q2, P1]
+```
+
+
+- [ ] **Step 2: 跑測試，確認失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: 新的三個和改了字的既有測試 FAIL（找不到 `等你（2）`、`件事等你`、`做好了` 等）。
+
+- [ ] **Step 3: 實作**
+
+`hooks/i18n.ts`：
+
+`EN`：
+
+```ts
+  viewCards: 'Waiting for you ({n})',
+  band: 'Plan: {doing} in progress · {waiting} waiting for you',
+  nothingWaiting: '✓ Nothing is waiting for you',
+  actionDone: 'Done',
+  actionWhy: 'Why: {why}',
+  command: 'Command: {command}',
+  sentChecking: 'Sent, waiting for the AI to check',
+  waitingAction: 'waiting for you to: {question}',
+  actionOpen: 'asked you to "{question}"',
+```
+
+`ZH_TW`：
+
+```ts
+  viewCards: '等你（{n}）',
+  band: '計畫：{doing} 項進行中 · {waiting} 件事等你',
+  nothingWaiting: '✓ 目前沒有等你的事',
+  actionDone: '做好了',
+  actionWhy: '為什麼：{why}',
+  command: '指令：{command}',
+  sentChecking: '已送出，等 AI 確認',
+  waitingAction: '等你處理：{question}',
+  actionOpen: '請你「{question}」',
+```
+
+（`viewCards`、`band`、`nothingWaiting` 是改既有的值；其餘是新的鍵。英文的 `viewCards`、`nothingWaiting` 字不變。）
+
+`hooks/lines.ts` 的 `changeLine`：
+
+```ts
+    case 'card.open':
+      return `${t(lang, 'kindCard')} ${t(lang, change.data.card.type === 'action' ? 'actionOpen' : 'cardOpen', { question: change.data.card.question })}`
+```
+
+`hooks/pane.tsx`：
+
+總表的步驟那一行，`note` 的算法換成：
+
+```tsx
+                      const waiting = open.find(card => card.step === stepId)
+                      const note =
+                        waiting === undefined
+                          ? evidenceOf(step, lang)
+                          : t(lang, waiting.type === 'action' ? 'waitingAction' : 'blockedBy', { question: waiting.question })
+```
+
+`cardBox` 整個換成：
+
+```tsx
+  const cardBox = (card: Card) => {
+    const where = whereText(current, card, lang)
+    const staged = Object.hasOwn(mine.staged, card.id) ? mine.staged[card.id] : undefined
+    const thought = Object.hasOwn(mine.sent, card.id) ? mine.sent[card.id].draft : undefined
+    const isFirst = card.id === firstId
+    const isAction = card.type === 'action'
+    // An action card is answered at once, as a blocking one is.
+    const isNow = card.blocking === true || isAction
+    const hotkey = (i: number) => (isFirst && i < 9 ? { hotkey: String(i + 1) } : {})
+    const border = (color: string) => ({ borderStyle: 'round', borderColor: color, paddingX: 1 }) as const
+
+    if (isSent(card)) {
+      return (
+        <Box key={`card:box:${card.id}`} flexDirection="column" {...border('gray')}>
+          <Text dimColor wrap="wrap">
+            {card.question}
+          </Text>
+          <Text dimColor wrap="wrap">
+            {where}
+          </Text>
+          <Text dimColor>{t(lang, isAction ? 'sentChecking' : 'sentWaiting')}</Text>
+        </Box>
+      )
+    }
+    if (!isFirst && !mine.expanded.includes(card.id)) {
+      return (
+        <Box key={`card:box:${card.id}`} flexDirection="column" {...border('gray')}>
+          <Button key={`card:${card.id}`} plain label={card.question} onPress={() => actions.toggle(card.id)} />
+          <Text dimColor wrap="wrap">
+            {where}
+          </Text>
+        </Box>
+      )
+    }
+
+    const head = (
+      <Box justifyContent="space-between">
+        <Box flexShrink={1}>
+          {isFirst ? (
+            <Text bold wrap="wrap">
+              {card.question}
+            </Text>
+          ) : (
+            <Button key={`card:${card.id}`} plain label={card.question} onPress={() => actions.toggle(card.id)} />
+          )}
+        </Box>
+        <Button key={`${card.id}:x`} plain dimColor role="dismiss" label="✕" onPress={() => actions.dismiss(card)} />
+      </Box>
+    )
+    const yours = thought !== undefined && (
+      <Box marginTop={1}>
+        <Text wrap="wrap">{t(lang, 'yourThought', { draft: thought })}</Text>
+      </Box>
+    )
+    const noteBox = Input && (
+      <Box marginTop={1}>
+        <Input
+          key={`${card.id}:note`}
+          placeholder={t(lang, isNow ? 'notePlaceholderNow' : 'notePlaceholderStaged')}
+          submitLabel={t(lang, isNow ? 'noteNow' : 'noteStaged')}
+          onSubmit={(value: string) => actions.think(card, value)}
+        />
+      </Box>
+    )
+
+    if (isAction) {
+      return (
+        <Box key={`card:box:${card.id}`} flexDirection="column" {...border(isFirst ? 'yellow' : 'gray')}>
+          {head}
+          <Text dimColor italic wrap="wrap">
+            {where}
+          </Text>
+          <Text wrap="wrap">{t(lang, 'actionWhy', { why: card.why })}</Text>
+          {card.command !== undefined && <Text wrap="wrap">{t(lang, 'command', { command: card.command })}</Text>}
+          <Box marginTop={1}>
+            <Button key={`${card.id}:done`} plain {...hotkey(0)} label={t(lang, 'actionDone')} onPress={() => actions.choose(card, 'done')} />
+          </Box>
+          {yours}
+          {noteBox}
+        </Box>
+      )
+    }
+
+    const recent = recentFor(current, card, RECENT)
+    const hasStaged = staged !== undefined
+    return (
+      <Box key={`card:box:${card.id}`} flexDirection="column" {...border(hasStaged ? 'green' : isFirst ? 'yellow' : 'gray')}>
+        {head}
+        <Text dimColor italic wrap="wrap">
+          {where}
+        </Text>
+        <Text wrap="wrap">{t(lang, 'why', { why: card.why })}</Text>
+        {recent.length > 0 && (
+          <Box flexDirection="column">
+            <Text dimColor>{t(lang, 'recent')}</Text>
+            {recent.map(entry => (
+              <Box key={`recent:${card.id}:${entry.id}`} paddingLeft={2}>
+                <Text dimColor wrap="wrap">
+                  {historyLines(entry, current, lang)[0]}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+        <Box flexDirection="column" marginTop={1}>
+          {card.type === 'proposal' ? (
+            <Box flexDirection="column">
+              <Button
+                key={`${card.id}:approve`}
+                plain
+                {...hotkey(0)}
+                label={`${staged?.choice === 'approve' ? '● ' : ''}${t(lang, 'approve')}`}
+                onPress={() => actions.choose(card, 'approve')}
+              />
+              {(card.changes ?? []).map((change, i) => (
+                <Box key={`change:${card.id}:${i}`} paddingLeft={2}>
+                  <Text dimColor wrap="wrap">
+                    {changeLine(change, current, lang)}
+                  </Text>
+                </Box>
+              ))}
+              <Button
+                key={`${card.id}:reject`}
+                plain
+                {...hotkey(1)}
+                label={`${staged?.choice === 'reject' ? '● ' : ''}${t(lang, 'reject')}`}
+                onPress={() => actions.choose(card, 'reject')}
+              />
+            </Box>
+          ) : (
+            card.options.map((option, i) => {
+              const mark = staged?.choice === option.label ? '● ' : ''
+              const label = `${mark || (isFirst && i < 9 ? '' : '› ')}${option.label}${option.recommended === true ? t(lang, 'recommended') : ''}`
+              const effect = option.reason !== undefined && option.reason !== '' ? `${option.effect} · ${option.reason}` : option.effect
+              return (
+                <Box key={`option:${card.id}:${i}`} flexDirection="column">
+                  <Button key={`${card.id}:${i}`} plain {...hotkey(i)} label={label} onPress={() => actions.choose(card, option.label)} />
+                  <Box paddingLeft={2}>
+                    <Text dimColor wrap="wrap">
+                      {effect}
+                    </Text>
+                  </Box>
+                </Box>
+              )
+            })
+          )}
+        </Box>
+        {yours}
+        {hasStaged && (
+          <Box justifyContent="space-between" marginTop={1}>
+            <Box flexDirection="column" flexShrink={1}>
+              {staged.isDismissed === true && (
+                <Text color="green" wrap="wrap">
+                  {t(lang, 'picked', { choice: t(lang, 'skip') })}
+                </Text>
+              )}
+              {staged.isDismissed !== true && staged.choice !== undefined && (
+                <Text color="green" wrap="wrap">
+                  {t(lang, 'picked', { choice: pickText(card, staged.choice, lang) })}
+                </Text>
+              )}
+              {staged.draft !== undefined && (
+                <Text color="green" wrap="wrap">
+                  {t(lang, 'drafted', { draft: staged.draft })}
+                </Text>
+              )}
+            </Box>
+            <Button key={`${card.id}:clear`} plain dimColor label={t(lang, 'clear')} onPress={() => actions.clear(card)} />
+          </Box>
+        )}
+        {noteBox}
+      </Box>
+    )
+  }
+```
+
+`hooks/register.tsx`：
+
+```ts
+const DENY_EDIT =
+  'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, add_user_action, resolve_decision, resolve_direct_edit.'
+```
+
+```ts
+// A blocking card is answered at once, and so is a card asking the user to do something; any other pick is staged for the batch.
+const act = ($: EngineInterface, card: Card, make: (current: Local, at: number) => Local): Promise<void> =>
+  card.blocking === true || card.type === 'action' ? sendNow($, card, make) : stage($, make)
+```
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `127 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): action cards in the pane; one count of what waits for you"
+```
+
+---
+
+### Task 16: 變動紀錄收合（spec 15.5）
+
+**Files:**
+- Modify: `plugins/plan-board/hooks/view.ts`（`isChatter`、`Row`、`foldHistory`；`recentFor` 改回傳 `Row[]`）
+- Modify: `plugins/plan-board/hooks/lines.ts`（`foldText`）
+- Modify: `plugins/plan-board/hooks/i18n.ts`
+- Modify: `plugins/plan-board/hooks/pane.tsx`（項目的變動紀錄、卡片的「之前：」）
+- Modify: `plugins/plan-board/hooks/local.ts`（`forget`）
+- Test: `tests/view.test.ts`、`tests/pane.test.ts`、`tests/local.test.ts`
+
+**Interfaces:**
+- Consumes: Task 12（`step.note` 不在 `itemLog`）、Task 15 的 `cardBox`。
+- Produces: `isChatter(entry: Entry): boolean`；`type Row = { kind: 'entry'; entry: Entry } | { kind: 'fold'; key: string; entries: Entry[] }`（`entries` 新的在前，`key` 是最舊那筆的 id）；`foldHistory(history: Entry[]): Row[]`；`recentFor(plan, card, n): Row[]`；`foldText(entries: Entry[], lang: Lang): string`；窗格的按鈕鍵 `fold:${itemId}:${row.key}`、`log:${itemId}:${entry.id}`；`Local.expanded` 裡的 `fold:<entry id>`、`why:<entry id>`。
+
+- [ ] **Step 1: 寫會失敗的測試，並改既有測試**
+
+`tests/view.test.ts`：import 加 `foldHistory`、`isChatter`：
+
+```ts
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor } from '../hooks/view.ts'
+```
+
+`history_newest_first_without_self` 裡 `const recent = …` 到 `expect(recent[0]).toEqual(history[0])` 換成：
+
+```ts
+  const recent = recentFor(plan, plan.cards.c1, 3)
+  // The card's own opening is left out, so the steps on both sides of it fold into one row.
+  expect(recent.map(row => row.kind)).toEqual(['fold', 'entry'])
+  const [fold, first] = recent
+  if (fold.kind !== 'fold' || first.kind !== 'entry') throw new Error('unreachable')
+  expect(fold.entries.map(e => e.kind)).toEqual(['step.add', 'step.add', 'step.add', 'step.add'])
+  expect(fold.entries[0]).toEqual(history[0])
+  expect(first.entry.kind).toBe('item.add')
+```
+
+最後加：
+
+```ts
+test('fold_history_groups_runs_of_step_chatter', async () => {
+  const entries = [
+    entry('item.add', { item: item('A') }),
+    step('A', 's1'),
+    step('A', 's2'),
+    entry('step.status', { step: 's1', status: 'doing' }),
+    card('c1', { item: 'A' }),
+    entry('item.link', { item: 'A', doc: 'docs/a.md' }),
+    entry('step.note', { step: 's1', note: 'waiting' }),
+    entry('item.edit', { item: 'A', goal: 'new goal' }),
+    entry('step.assign', { step: 's2', to: 'claude-b' }),
+  ]
+  const plan = await replay(await logText(entries))
+  const id = (n: number) => entries[n].id
+  const shape = foldHistory(historyOf(plan, 'A')).map(row =>
+    row.kind === 'entry' ? row.entry.id : `fold:${row.key}:${row.entries.map(e => e.id).join(',')}`,
+  )
+  expect(shape).toEqual([id(8), id(7), id(5), id(4), `fold:${id(1)}:${id(3)},${id(2)},${id(1)}`, id(0)])
+  expect(isChatter(entries[5])).toBe(true)
+  expect(isChatter(entries[7])).toBe(false)
+  expect(isChatter(entries[4])).toBe(false)
+  expect(foldHistory([])).toEqual([])
+})
+```
+
+`tests/local.test.ts` 最後加：
+
+```ts
+test('forget_keeps_open_history_rows_of_entries_still_in_the_log', async () => {
+  const kept = entry('item.add', { item: { id: 'A', title: 'A', goal: 'g' } })
+  const plan = await planOf(kept, question('open'))
+  const local = { ...emptyLocal(), expanded: ['A', `fold:${kept.id}`, `why:${kept.id}`, 'fold:000000000fff', 'why:gone', 'open'] }
+  expect(forget(local, plan).expanded).toEqual(['A', `fold:${kept.id}`, `why:${kept.id}`, 'open'])
+})
+```
+
+`tests/pane.test.ts`：import 加 `foldText`：
+
+```ts
+import { foldText, historyLines, stamp } from '../hooks/lines.ts'
+```
+
+最後加：
+
+```ts
+test('fold_text_counts_each_kind_in_both_languages', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item(A, '看板', 'g') }),
+      entry('step.add', { item: A, step: { id: S1, title: '一' } }),
+      entry('step.add', { item: A, step: { id: S2, title: '二' } }),
+      entry('step.status', { step: S1, status: 'doing' }),
+      entry('step.status', { step: S1, status: 'done', result: 'ok' }),
+      entry('step.status', { step: S2, status: 'todo' }),
+      entry('step.edit', { step: S2, title: '二 v2' }),
+      entry('step.assign', { step: S2, to: 'claude-b' }),
+      entry('step.move', { step: S2, item: A }),
+      entry('item.link', { item: A, doc: PLAN }),
+      entry('step.remove', { step: S2 }),
+    ]),
+  )
+  const chatter = plan.applied.slice(1)
+  expect(foldText(chatter, 'zh-TW')).toBe('步驟：新增 2 個、做完 1 個、開始 1 個、改回還沒開始 1 個、改名 1 個、刪掉 1 個、移動 1 個、改派 1 個、連上文件 1 個')
+  expect(foldText(chatter, 'en')).toBe('Steps: 2 added, 1 done, 1 started, 1 back to not started, 1 renamed, 1 removed, 1 moved, 1 reassigned, 1 docs linked')
+  expect(foldText(chatter.slice(0, 3), 'en')).toBe('Steps: 2 added, 1 started')
+})
+
+test('history_folds_step_chatter_and_shows_a_reason_on_press', ZH, async ($, on) => {
+  const entries = [...board(), blockedOnS2()]
+  const w = await start($, on, entries)
+  const addS1 = entries[3]
+  const doneS1 = entries[5]
+  const fold = `fold:${B}:${addS1.id}`
+  const log = `log:${B}:${doneS1.id}`
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toMatch(/^\d\d\/\d\d \d\d:\d\d ▸ 步驟：新增 2 個、做完 1 個、開始 1 個$/)
+    expect(await ui.find({ key: log })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^原因：/ })).toBeUndefined()
+    // What the user decided stays on a line of its own.
+    expect(await ui.find({ type: 'Button', text: /卡片 提出「輸入框上方要不要顯示做完的數量？」/ })).toBeDefined()
+
+    await ui.press({ key: fold })
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toContain('▾ 步驟：')
+    expect(localOf(w).expanded).toContain(`fold:${addS1.id}`)
+    expect((await ui.find({ type: 'Button', key: log }))?.text).toContain('「定檔案格式」→ 做完 · Thoth pass')
+    expect(await ui.find({ type: 'Text', text: '原因：面板測試全過' })).toBeUndefined()
+
+    await ui.press({ key: log })
+    expect(await ui.find({ type: 'Text', text: '原因：面板測試全過' })).toBeDefined()
+    expect(localOf(w).expanded).toContain(`why:${doneS1.id}`)
+    await ui.press({ key: log })
+    expect(await ui.find({ type: 'Text', text: '原因：面板測試全過' })).toBeUndefined()
+
+    // The card's "before" shows the same fold as one line that does not open.
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: /^\d\d\/\d\d \d\d:\d\d 步驟：新增 2 個、做完 1 個、開始 1 個$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('an_open_fold_stays_open_when_more_step_chatter_arrives', ZH, async ($, on) => {
+  const entries = board()
+  const w = await start($, on, entries)
+  const fold = `fold:${B}:${entries[3].id}`
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: fold })
+    await $.tool.call({ tool: tool('update_step'), why: '多一步', ops: [{ action: 'add', item: B, title: `補測試 ${surface}` }] })
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toContain('▾ 步驟：')
+    expect(await ui.find({ type: 'Button', text: new RegExp(`新增「補測試 ${surface}」`) })).toBeDefined()
+    await ui.unmount()
+  }
+})
+```
+
+既有測試：
+
+- `overview_shows_states_and_expands_item`：把
+
+  ```ts
+      expect(await ui.find({ type: 'Text', text: /^原因：面板測試全過/ })).toBeDefined()
+  ```
+
+  換成
+
+  ```ts
+      expect(await ui.find({ type: 'Button', text: /▸ 步驟：新增 2 個、做完 1 個、開始 1 個$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^原因：/ })).toBeUndefined()
+  ```
+
+- `overview_lists_linked_docs_and_marks_local_mode`、`an_assignee_that_looks_like_an_id_is_shown_as_a_thoth_task`：在 `const seen = await texts(ui)` 前面打開收合的那一行：
+
+  ```ts
+      for (const found of await ui.findAll({ type: 'Button', text: /▸ 步驟：/ })) await ui.press({ key: found.key as string })
+  ```
+
+- `no_ids_in_zh_tw_text`：在 `for (const id of items) await ui.press({ key: `item:${id}` })` 後面加同一行，再收集 `seen`。
+
+- `i18n_tables_have_the_same_keys` 的 `words` 加 `'步驟：{counts}'`、`'新增 {n} 個'`、`'做完 {n} 個'`、`'開始 {n} 個'`、`'改回還沒開始 {n} 個'`、`'改名 {n} 個'`、`'刪掉 {n} 個'`、`'移動 {n} 個'`、`'改派 {n} 個'`、`'連上文件 {n} 個'`。
+
+- [ ] **Step 2: 跑測試，確認失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: 新加的測試和改過的既有測試 FAIL（`foldHistory is not a function`、找不到 `▸ 步驟：` 等）。
+
+- [ ] **Step 3: 實作**
+
+`hooks/i18n.ts`：
+
+`EN`：
+
+```ts
+  foldSteps: 'Steps: {counts}',
+  foldAdded: '{n} added',
+  foldDone: '{n} done',
+  foldStarted: '{n} started',
+  foldBack: '{n} back to not started',
+  foldRenamed: '{n} renamed',
+  foldRemoved: '{n} removed',
+  foldMoved: '{n} moved',
+  foldReassigned: '{n} reassigned',
+  foldLinked: '{n} docs linked',
+```
+
+`ZH_TW`：
+
+```ts
+  foldSteps: '步驟：{counts}',
+  foldAdded: '新增 {n} 個',
+  foldDone: '做完 {n} 個',
+  foldStarted: '開始 {n} 個',
+  foldBack: '改回還沒開始 {n} 個',
+  foldRenamed: '改名 {n} 個',
+  foldRemoved: '刪掉 {n} 個',
+  foldMoved: '移動 {n} 個',
+  foldReassigned: '改派 {n} 個',
+  foldLinked: '連上文件 {n} 個',
+```
+
+`hooks/view.ts`，`historyOf` 後面加，並把 `recentFor` 換掉：
+
+```ts
+/** Step-level chatter, folded in the history; step.note never reaches the history at all. */
+const CHATTER: ReadonlySet<string> = new Set(['step.add', 'step.edit', 'step.remove', 'step.move', 'step.assign', 'step.status', 'item.link'])
+
+export const isChatter = (entry: Entry): boolean => CHATTER.has(entry.kind)
+
+/** A history row: one entry, or a run of two or more chatter entries (newest first) named by its oldest, so it keeps its name as the run grows. */
+export type Row = { kind: 'entry'; entry: Entry } | { kind: 'fold'; key: string; entries: Entry[] }
+
+export function foldHistory(history: Entry[]): Row[] {
+  const rows: Row[] = []
+  let run: Entry[] = []
+  const flush = (): void => {
+    if (run.length === 1) rows.push({ kind: 'entry', entry: run[0] })
+    else if (run.length > 1) rows.push({ kind: 'fold', key: run[run.length - 1].id, entries: run })
+    run = []
+  }
+  for (const entry of history) {
+    if (isChatter(entry)) {
+      run.push(entry)
+      continue
+    }
+    flush()
+    rows.push({ kind: 'entry', entry })
+  }
+  flush()
+  return rows
+}
+
+export function recentFor(plan: Plan, card: Card, n: number): Row[] {
+  if (card.item === undefined) return []
+  const history = historyOf(plan, card.item).filter(entry => !(entry.kind === 'card.open' && entry.data.card.id === card.id))
+  return foldHistory(history).slice(0, n)
+}
+```
+
+`hooks/lines.ts`：import 改成 `import type { Key, Lang } from './i18n.ts'`，檔案最後加：
+
+```ts
+/** The label each kind of step chatter is counted under, in the order a folded row lists them. */
+const FOLD: Key[] = ['foldAdded', 'foldDone', 'foldStarted', 'foldBack', 'foldRenamed', 'foldRemoved', 'foldMoved', 'foldReassigned', 'foldLinked']
+
+function foldKeyOf(entry: Entry): Key {
+  switch (entry.kind) {
+    case 'step.add':
+      return 'foldAdded'
+    case 'step.status':
+      return entry.data.status === 'done' ? 'foldDone' : entry.data.status === 'doing' ? 'foldStarted' : 'foldBack'
+    case 'step.edit':
+      return 'foldRenamed'
+    case 'step.remove':
+      return 'foldRemoved'
+    case 'step.move':
+      return 'foldMoved'
+    case 'step.assign':
+      return 'foldReassigned'
+    default:
+      return 'foldLinked'
+  }
+}
+
+/** A run of step chatter as one phrase: how many steps had what done to them, without the time. */
+export function foldText(entries: Entry[], lang: Lang): string {
+  const counts = new Map<Key, number>()
+  for (const entry of entries) {
+    const key = foldKeyOf(entry)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const parts = FOLD.filter(key => counts.has(key)).map(key => t(lang, key, { n: counts.get(key) ?? 0 }))
+  return t(lang, 'foldSteps', { counts: parts.join(lang === 'zh-TW' ? '、' : ', ') })
+}
+```
+
+`hooks/pane.tsx`：
+
+import 改成：
+
+```ts
+import { assignedText, changeLine, fit, foldText, historyLines, stamp, textWidth } from './lines.ts'
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, itemStates, openCards, recentFor } from './view.ts'
+import type { Row } from './view.ts'
+import type { Card, Entry, ItemState, Local, Plan, Step } from '../types'
+```
+
+`paneView` 裡、`overview` 前面加兩個畫一行紀錄的函式：
+
+```tsx
+  /** One entry of an item's history: a line to press for its reason. */
+  const logRow = (itemId: string, entry: Entry, isNested: boolean) => {
+    const [line, reason] = historyLines(entry, current, lang)
+    const whyKey = `why:${entry.id}`
+    return (
+      <Box key={`box:log:${itemId}:${entry.id}`} flexDirection="column" paddingLeft={isNested ? 2 : 0}>
+        <Button key={`log:${itemId}:${entry.id}`} plain label={line} onPress={() => actions.toggle(whyKey)} />
+        {reason !== undefined && mine.expanded.includes(whyKey) && (
+          <Box paddingLeft={2}>
+            <Text dimColor wrap="wrap">
+              {reason}
+            </Text>
+          </Box>
+        )}
+      </Box>
+    )
+  }
+
+  /** A row of an item's history: an entry, or a fold that opens into its entries. */
+  const historyRow = (itemId: string, row: Row) => {
+    if (row.kind === 'entry') return logRow(itemId, row.entry, false)
+    const foldKey = `fold:${row.key}`
+    const isOpen = mine.expanded.includes(foldKey)
+    const label = `${stamp(row.entries[0].at)} ${isOpen ? '▾' : '▸'} ${foldText(row.entries, lang)}`
+    return (
+      <Box key={`box:fold:${itemId}:${row.key}`} flexDirection="column">
+        <Button key={`fold:${itemId}:${row.key}`} plain label={label} onPress={() => actions.toggle(foldKey)} />
+        {isOpen && row.entries.map(entry => logRow(itemId, entry, true))}
+      </Box>
+    )
+  }
+```
+
+`overview` 裡整段
+
+```tsx
+                  {historyOf(current, id).map(entry => {
+                    const lines = historyLines(entry, current, lang)
+                    return ( … )
+                  })}
+```
+
+換成
+
+```tsx
+                  {foldHistory(historyOf(current, id)).map(row => historyRow(id, row))}
+```
+
+`cardBox` 的「之前：」那段換成：
+
+```tsx
+            {recent.map(row => (
+              <Box key={`recent:${card.id}:${row.kind === 'entry' ? row.entry.id : row.key}`} paddingLeft={2}>
+                <Text dimColor wrap="wrap">
+                  {row.kind === 'entry' ? historyLines(row.entry, current, lang)[0] : `${stamp(row.entries[0].at)} ${foldText(row.entries, lang)}`}
+                </Text>
+              </Box>
+            ))}
+```
+
+`hooks/local.ts` 的 `forget` 換成：
+
+```ts
+/** An open history row in `expanded`: fold:<entry id> or why:<entry id>. */
+const ROW = /^(?:fold|why):(.*)$/
+
+/** Drops what belongs to cards that are resolved or gone, and open history rows whose entry is gone; item ids stay while the item does. */
+export function forget(local: Local, plan: Plan): Local {
+  const isOpen = (id: string): boolean => Object.hasOwn(plan.cards, id) && plan.cards[id].resolved === undefined
+  const keepOpen = (table: Record<string, Pick>): Record<string, Pick> => Object.fromEntries(Object.entries(table).filter(([id]) => isOpen(id)))
+  const entries = new Set(plan.applied.map(entry => entry.id))
+  const isKept = (id: string): boolean => {
+    const row = ROW.exec(id)
+    if (row !== null) return entries.has(row[1])
+    return Object.hasOwn(plan.cards, id) ? plan.cards[id].resolved === undefined : Object.hasOwn(plan.items, id)
+  }
+  return { ...local, staged: keepOpen(local.staged), sent: keepOpen(local.sent), expanded: local.expanded.filter(isKept) }
+}
+```
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `132 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): fold step chatter in the history; reasons open on a press"
+```
+
+---
+
+### Task 17: 給 AI 的說明、README、版本（spec 15.6、15.7）
+
+**Files:**
+- Modify: `plugins/plan-board/hooks/guide.ts`（`GUIDE`）
+- Modify: `plugins/plan-board/.claude-plugin/plugin.json`（`version`）
+- Modify: `README.md`、`README.zh-TW.md`（「Items and steps」／「項目和步驟」）
+- Test: `tests/view.test.ts`
+
+**Interfaces:**
+- Consumes: Task 12–16 的工具和 op 名稱：`note`、`add` 的 `status`／`to`／`note`、op 上的 `evidence`、`add_user_action`。
+- Produces: 無。
+
+- [ ] **Step 1: 寫會失敗的測試**
+
+`tests/view.test.ts`：`guide_names_every_tool` 的名單加 `'add_user_action'`；最後加：
+
+```ts
+test('guide_covers_notes_actions_evidence_and_plain_words', () => {
+  expect(GUIDE).toContain('action note')
+  expect(GUIDE).toContain('never in its title')
+  expect(GUIDE).toContain('on the add op itself')
+  expect(GUIDE).toContain('on the op that sets status done')
+  expect(GUIDE).toContain('add_user_action')
+  expect(GUIDE).toContain('plain words')
+})
+```
+
+- [ ] **Step 2: 跑測試，確認失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: `guide_names_every_tool`、`guide_covers_notes_actions_evidence_and_plain_words` FAIL。
+
+- [ ] **Step 3: 實作**
+
+`hooks/guide.ts` 的 `GUIDE`：
+
+把
+
+```ts
+  '- Steps are yours: add, edit, remove, move, assign and set their status with update_step whenever the work changes, without asking. Always give a one-line why.',
+  '- Mark a step done only with evidence: the Thoth task id once your Thoth tools show the task passed, otherwise a one-line result.',
+```
+
+換成
+
+```ts
+  '- Steps are yours: add, edit, remove, move, assign and set their status with update_step whenever the work changes, without asking. Always give a one-line why.',
+  "- When adding a step, set its status, assignee (to) and note on the add op itself instead of in a second call.",
+  '- Where a step stands or who it waits on goes in its note (update_step, action note), never in its title. The note clears itself when the step is done; a call with only notes needs no why.',
+  '- Mark a step done only with evidence, put on the op that sets status done: the Thoth task id once your Thoth tools show the task passed, otherwise a one-line result.',
+```
+
+在 `add_decision` 那一行後面加：
+
+```ts
+  '- When the user has to do something themselves (run a command in their terminal, approve something, log in), open a card with add_user_action (one line, and the command word for word) instead of only saying it in chat. When they mark it done, check it if you can, then close it with resolve_decision.',
+```
+
+在 `'- The ids in the summary are for you; never show them to the user.'` 前面加：
+
+```ts
+  "- Every why, card question, item or step title and outcome is read by the user: write it in plain words in the user's language, with no ids and no file or function names they have not used.",
+```
+
+`.claude-plugin/plugin.json`：`"version": "0.1.0"` → `"version": "0.2.0"`。
+
+`README.md` 的「Items and steps」：
+
+表格最後一列換成：
+
+```markdown
+| Steps: add, reword, remove, move to another item, assign, change status, note where they stand | The AI uses `update_step` | No, but every change is logged with a reason |
+```
+
+`- A **step** is the AI's level: …` 那一點換成：
+
+```markdown
+- A **step** is the AI's level: one sentence, a status (not started, in progress, done), optionally who it is assigned to, and a note on where it stands or who it waits on. A note is not shown in the change history and clears itself when the step is done. A step is **stuck** while an open card points at it. The AI can add a step already started, assigned and noted in one go.
+- A step is marked done only with evidence, given on that one change: a Thoth task id once the AI's Thoth tools show the task passed, or a one-line result the AI reports.
+```
+
+（原本的 `- A step is marked done only with evidence: …` 那一點刪掉，由上面第二點取代。）
+
+在 `- A card you answered only with a thought stays open: …` 前面加：
+
+```markdown
+- **Action cards** ask you to do something yourself, such as running a command in your terminal: one line, why, and the command. Press **Done** when you have done it; it is sent at once, and the AI checks it if it can and closes the card. Action cards sit with the decision cards, come first, and count in the same number above the prompt ("3 waiting for you"). A step an action card points at shows "waiting for you to: …".
+- The change history of an item keeps item changes, cards and direct edits on their own lines. Two or more step changes in a row fold into one line, such as "Steps: 3 done, 2 added", which opens on a press. Reasons are hidden until you press a line.
+```
+
+`README.zh-TW.md` 的「項目和步驟」：
+
+表格最後一列換成：
+
+```markdown
+| 步驟：新增、改字、刪掉、移到別的項目、改派、改狀態、寫備註 | AI 用 `update_step` | 不用，但每次都記錄原因 |
+```
+
+`- **步驟**是 AI 的層級：…` 那一點和下一點換成：
+
+```markdown
+- **步驟**是 AI 的層級：一句話、一個狀態（還沒開始、進行中、做完），可以註明派給誰，也可以寫一句備註說現在卡在哪、在等誰。備註不會出現在變動紀錄，步驟做完時自動清掉。有未決的卡片指到某個步驟時，那個步驟就是**卡住**。AI 新增步驟時可以一次設好狀態、派給誰和備註。
+- 步驟標做完一定要附證據，而且證據只算在標做完的那一個改動上：AI 的 Thoth 工具看到任務通過之後附上 Thoth 任務 id，或是 AI 回報的一句結果。
+```
+
+在 `- 只用想法回答的卡片會繼續開著：…` 前面加：
+
+```markdown
+- **待你處理卡**是要你自己動手的事，例如在終端機跑一個指令：一句話、為什麼、要跑的指令。做完按「做好了」，會立刻送給 AI，AI 能查就先查，再結案。待你處理卡和決定卡放在一起、排在最前面，輸入框上方那列合計成「3 件事等你」。待你處理卡指到的步驟會顯示「等你處理：…」。
+- 項目的變動紀錄裡，項目的改動、卡片、直接改檔的處理各自一行；連續兩筆以上的步驟變動合成一行，例如「步驟：做完 3 個、新增 2 個」，按了才展開。原因預設收起來，按那一行才顯示。
+```
+
+- [ ] **Step 4: 跑全部檢查**
+
+Run: `claude plugin test plugins/plan-board` → `133 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+Run: `claude plugin validate .` → 沒有錯誤。
+Run: `node --test tests-git/merge.test.ts` → `fail 0`。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board README.md README.zh-TW.md
+git commit -m "docs(plan-board): guide, README and 0.2.0 for notes, action cards and folded history"
+```
