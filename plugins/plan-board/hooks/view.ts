@@ -60,11 +60,38 @@ export function historyOf(plan: Plan, itemId: string): Entry[] {
   return [...(plan.itemLog[itemId] ?? [])].reverse()
 }
 
-export function recentFor(plan: Plan, card: Card, n: number): Entry[] {
+/** Step-level chatter, folded in the history; step.note never reaches the history at all. */
+const CHATTER: ReadonlySet<string> = new Set(['step.add', 'step.edit', 'step.remove', 'step.move', 'step.assign', 'step.status', 'item.link'])
+
+export const isChatter = (entry: Entry): boolean => CHATTER.has(entry.kind)
+
+/** A history row: one entry, or a run of two or more chatter entries (newest first) named by its oldest, so it keeps its name as the run grows. */
+export type Row = { kind: 'entry'; entry: Entry } | { kind: 'fold'; key: string; entries: Entry[] }
+
+export function foldHistory(history: Entry[]): Row[] {
+  const rows: Row[] = []
+  let run: Entry[] = []
+  const flush = (): void => {
+    if (run.length === 1) rows.push({ kind: 'entry', entry: run[0] })
+    else if (run.length > 1) rows.push({ kind: 'fold', key: run[run.length - 1].id, entries: run })
+    run = []
+  }
+  for (const entry of history) {
+    if (isChatter(entry)) {
+      run.push(entry)
+      continue
+    }
+    flush()
+    rows.push({ kind: 'entry', entry })
+  }
+  flush()
+  return rows
+}
+
+export function recentFor(plan: Plan, card: Card, n: number): Row[] {
   if (card.item === undefined) return []
-  return historyOf(plan, card.item)
-    .filter(entry => !(entry.kind === 'card.open' && entry.data.card.id === card.id))
-    .slice(0, n)
+  const history = historyOf(plan, card.item).filter(entry => !(entry.kind === 'card.open' && entry.data.card.id === card.id))
+  return foldHistory(history).slice(0, n)
 }
 
 export function bandCounts(plan: Plan, local: Local): { doing: number; waiting: number; isEdited: boolean } {

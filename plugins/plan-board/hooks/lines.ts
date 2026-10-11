@@ -1,5 +1,5 @@
 import { t } from './i18n.ts'
-import type { Lang } from './i18n.ts'
+import type { Key, Lang } from './i18n.ts'
 import type { Change, Entry, Plan } from '../types'
 
 /** Cells a character takes on a terminal: two for wide East Asian characters. */
@@ -149,4 +149,37 @@ export function historyLines(entry: Entry, plan: Plan, lang: Lang): string[] {
   const lines = [`${stamp(entry.at)} ${changeLine(entry, plan, lang, previous)}${sourceOf(entry, plan, lang)}`]
   if (entry.why !== '') lines.push(t(lang, 'reason', { why: entry.why }))
   return lines
+}
+
+/** The label each kind of step chatter is counted under, in the order a folded row lists them. */
+const FOLD: Key[] = ['foldAdded', 'foldDone', 'foldStarted', 'foldBack', 'foldRenamed', 'foldRemoved', 'foldMoved', 'foldReassigned', 'foldLinked']
+
+function foldKeyOf(entry: Entry): Key {
+  switch (entry.kind) {
+    case 'step.add':
+      return 'foldAdded'
+    case 'step.status':
+      return entry.data.status === 'done' ? 'foldDone' : entry.data.status === 'doing' ? 'foldStarted' : 'foldBack'
+    case 'step.edit':
+      return 'foldRenamed'
+    case 'step.remove':
+      return 'foldRemoved'
+    case 'step.move':
+      return 'foldMoved'
+    case 'step.assign':
+      return 'foldReassigned'
+    default:
+      return 'foldLinked'
+  }
+}
+
+/** A run of step chatter as one phrase: how many steps had what done to them, without the time. */
+export function foldText(entries: Entry[], lang: Lang): string {
+  const counts = new Map<Key, number>()
+  for (const entry of entries) {
+    const key = foldKeyOf(entry)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const parts = FOLD.filter(key => counts.has(key)).map(key => t(lang, key, { n: counts.get(key) ?? 0 }))
+  return t(lang, 'foldSteps', { counts: parts.join(lang === 'zh-TW' ? '、' : ', ') })
 }

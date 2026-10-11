@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { hasKey, keysOf, t } from '../hooks/i18n.ts'
-import { historyLines, stamp } from '../hooks/lines.ts'
+import { foldText, historyLines, stamp } from '../hooks/lines.ts'
 import { replay } from '../hooks/replay.ts'
 import { entry, logText } from './fixtures.ts'
 import { world } from './world.ts'
@@ -134,7 +134,8 @@ test('overview_shows_states_and_expands_item', ZH, async ($, on) => {
     expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
     expect(await ui.find({ text: '等你決定：輸入框上方要不要顯示做完的數量？' })).toBeDefined()
     expect(await ui.find({ text: '── 變動紀錄 ──' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^原因：面板測試全過/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /▸ 步驟：新增 2 個、做完 1 個、開始 1 個$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^原因：/ })).toBeUndefined()
     expect(localOf(w).expanded).toEqual([B])
 
     await ui.press({ key: `item:${B}` })
@@ -465,6 +466,7 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     const ui = await pane($, surface)
     const seen: string[] = []
     for (const id of items) await ui.press({ key: `item:${id}` })
+    for (const found of await ui.findAll({ type: 'Button', text: /▸ 步驟：/ })) await ui.press({ key: found.key as string })
     seen.push(...(await texts(ui)))
     expect(seen.some(text => text.includes('── 變動紀錄 ──'))).toBe(true)
     expect(seen.some(text => text.includes('你在「要不要先做決定看板？」選了同意'))).toBe(true)
@@ -579,6 +581,7 @@ test('overview_lists_linked_docs_and_marks_local_mode', ZH, async ($, on) => {
     expect(await ui.find({ text: `文件：${SPEC}` })).toBeUndefined()
 
     await ui.press({ key: `item:${B}` })
+    for (const found of await ui.findAll({ type: 'Button', text: /▸ 步驟：/ })) await ui.press({ key: found.key as string })
     const seen = await texts(ui)
     const at = (text: string) => seen.findIndex(found => found === text)
     expect(at(`文件：${SPEC}`)).toBeGreaterThan(at('做完的樣子：總表和卡片都看得到'))
@@ -636,6 +639,7 @@ test('an_assignee_that_looks_like_an_id_is_shown_as_a_thoth_task', ZH, async ($,
     await fresh($, w)
     const ui = await pane($, surface)
     await ui.press({ key: `item:${B}` })
+    for (const found of await ui.findAll({ type: 'Button', text: /▸ 步驟：/ })) await ui.press({ key: found.key as string })
     const seen = await texts(ui)
     expect(seen.filter(text => text === '派給 Thoth 任務')).toHaveLength(2)
     expect(seen).toContain('派給 claude-b')
@@ -760,6 +764,7 @@ test('i18n_tables_have_the_same_keys', () => {
     '計畫已搬進 repo，現在存在 plan/log.jsonl。', '這個 repo 已經把計畫存在 plan/log.jsonl，什麼都沒改。',
     '計畫被直接改過，等 AI 檢查', '· ⚠ 計畫被直接改過', '計畫：{doing} 項進行中 · {waiting} 件事等你', '打開',
     '做好了', '為什麼：{why}', '指令：{command}', '已送出，等 AI 確認', '等你處理：{question}', '請你「{question}」',
+    '步驟：{counts}', '新增 {n} 個', '做完 {n} 個', '開始 {n} 個', '改回還沒開始 {n} 個', '改名 {n} 個', '刪掉 {n} 個', '移動 {n} 個', '改派 {n} 個', '連上文件 {n} 個',
   ]
   const values = new Set(zh.map(key => t('zh-TW', key as never)))
   // t fills slots it has values for; unfilled ones stay as written.
@@ -901,4 +906,78 @@ test('action_card_history_line', async () => {
   )
   expect(historyLines(plan.applied[0], plan, 'zh-TW')[0]).toContain(`卡片 請你「${ACTION}」`)
   expect(historyLines(plan.applied[0], plan, 'en')[0]).toContain(`Card asked you to "${ACTION}"`)
+})
+
+test('fold_text_counts_each_kind_in_both_languages', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item(A, '看板', 'g') }),
+      entry('step.add', { item: A, step: { id: S1, title: '一' } }),
+      entry('step.add', { item: A, step: { id: S2, title: '二' } }),
+      entry('step.status', { step: S1, status: 'doing' }),
+      entry('step.status', { step: S1, status: 'done', result: 'ok' }),
+      entry('step.status', { step: S2, status: 'todo' }),
+      entry('step.edit', { step: S2, title: '二 v2' }),
+      entry('step.assign', { step: S2, to: 'claude-b' }),
+      entry('step.move', { step: S2, item: A }),
+      entry('item.link', { item: A, doc: PLAN }),
+      entry('step.remove', { step: S2 }),
+    ]),
+  )
+  const chatter = plan.applied.slice(1)
+  expect(foldText(chatter, 'zh-TW')).toBe('步驟：新增 2 個、做完 1 個、開始 1 個、改回還沒開始 1 個、改名 1 個、刪掉 1 個、移動 1 個、改派 1 個、連上文件 1 個')
+  expect(foldText(chatter, 'en')).toBe('Steps: 2 added, 1 done, 1 started, 1 back to not started, 1 renamed, 1 removed, 1 moved, 1 reassigned, 1 docs linked')
+  expect(foldText(chatter.slice(0, 3), 'en')).toBe('Steps: 2 added, 1 started')
+})
+
+test('history_folds_step_chatter_and_shows_a_reason_on_press', ZH, async ($, on) => {
+  const entries = [...board(), blockedOnS2()]
+  const w = await start($, on, entries)
+  const addS1 = entries[3]
+  const doneS1 = entries[5]
+  const fold = `fold:${B}:${addS1.id}`
+  const log = `log:${B}:${doneS1.id}`
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toMatch(/^\d\d\/\d\d \d\d:\d\d ▸ 步驟：新增 2 個、做完 1 個、開始 1 個$/)
+    expect(await ui.find({ key: log })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^原因：/ })).toBeUndefined()
+    // What the user decided stays on a line of its own.
+    expect(await ui.find({ type: 'Button', text: /卡片 提出「輸入框上方要不要顯示做完的數量？」/ })).toBeDefined()
+
+    await ui.press({ key: fold })
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toContain('▾ 步驟：')
+    expect(localOf(w).expanded).toContain(`fold:${addS1.id}`)
+    expect((await ui.find({ type: 'Button', key: log }))?.text).toContain('「定檔案格式」→ 做完 · Thoth pass')
+    expect(await ui.find({ type: 'Text', text: '原因：面板測試全過' })).toBeUndefined()
+
+    await ui.press({ key: log })
+    expect(await ui.find({ type: 'Text', text: '原因：面板測試全過' })).toBeDefined()
+    expect(localOf(w).expanded).toContain(`why:${doneS1.id}`)
+    await ui.press({ key: log })
+    expect(await ui.find({ type: 'Text', text: '原因：面板測試全過' })).toBeUndefined()
+
+    // The card's "before" shows the same fold as one line that does not open.
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: /^\d\d\/\d\d \d\d:\d\d 步驟：新增 2 個、做完 1 個、開始 1 個$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('an_open_fold_stays_open_when_more_step_chatter_arrives', ZH, async ($, on) => {
+  const entries = board()
+  const w = await start($, on, entries)
+  const fold = `fold:${B}:${entries[3].id}`
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: fold })
+    await $.tool.call({ tool: tool('update_step'), why: '多一步', ops: [{ action: 'add', item: B, title: `補測試 ${surface}` }] })
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toContain('▾ 步驟：')
+    expect(await ui.find({ type: 'Button', text: new RegExp(`新增「補測試 ${surface}」`) })).toBeDefined()
+    await ui.unmount()
+  }
 })

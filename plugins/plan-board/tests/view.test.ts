@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { sha16 } from '../hooks/checksum.ts'
 import { GUIDE, summary } from '../hooks/guide.ts'
 import { emptyPlan, replay } from '../hooks/replay.ts'
-import { bandCounts, blockedSteps, cardPosition, historyOf, itemStates, openCards, recentFor } from '../hooks/view.ts'
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor } from '../hooks/view.ts'
 import { entry, logText } from './fixtures.ts'
 import type { Entry, Local } from '../types'
 
@@ -102,9 +102,13 @@ test('history_newest_first_without_self', async () => {
   expect(history[0].at > history[1].at).toBe(true)
   expect(history[history.length - 1].kind).toBe('item.add')
   const recent = recentFor(plan, plan.cards.c1, 3)
-  expect(recent.length).toBe(3)
-  expect(recent.some(e => e.kind === 'card.open')).toBe(false)
-  expect(recent[0]).toEqual(history[0])
+  // The card's own opening is left out, so the steps on both sides of it fold into one row.
+  expect(recent.map(row => row.kind)).toEqual(['fold', 'entry'])
+  const [fold, first] = recent
+  if (fold.kind !== 'fold' || first.kind !== 'entry') throw new Error('unreachable')
+  expect(fold.entries.map(e => e.kind)).toEqual(['step.add', 'step.add', 'step.add', 'step.add'])
+  expect(fold.entries[0]).toEqual(history[0])
+  expect(first.entry.kind).toBe('item.add')
   expect(recentFor(plan, { ...plan.cards.c1, item: undefined }, 3)).toEqual([])
 })
 
@@ -275,4 +279,28 @@ test('action_cards_come_first_and_count_as_waiting', async () => {
   expect(openCards(plan).map(c => c.id)).toEqual(['act', 'c-block', 'c-a'])
   expect(bandCounts(plan, emptyLocal).waiting).toBe(3)
   expect(summary(plan, emptyLocal)).toContain('- [act] q-act {action}')
+})
+
+test('fold_history_groups_runs_of_step_chatter', async () => {
+  const entries = [
+    entry('item.add', { item: item('A') }),
+    step('A', 's1'),
+    step('A', 's2'),
+    entry('step.status', { step: 's1', status: 'doing' }),
+    card('c1', { item: 'A' }),
+    entry('item.link', { item: 'A', doc: 'docs/a.md' }),
+    entry('step.note', { step: 's1', note: 'waiting' }),
+    entry('item.edit', { item: 'A', goal: 'new goal' }),
+    entry('step.assign', { step: 's2', to: 'claude-b' }),
+  ]
+  const plan = await replay(await logText(entries))
+  const id = (n: number) => entries[n].id
+  const shape = foldHistory(historyOf(plan, 'A')).map(row =>
+    row.kind === 'entry' ? row.entry.id : `fold:${row.key}:${row.entries.map(e => e.id).join(',')}`,
+  )
+  expect(shape).toEqual([id(8), id(7), id(5), id(4), `fold:${id(1)}:${id(3)},${id(2)},${id(1)}`, id(0)])
+  expect(isChatter(entries[5])).toBe(true)
+  expect(isChatter(entries[7])).toBe(false)
+  expect(isChatter(entries[4])).toBe(false)
+  expect(foldHistory([])).toEqual([])
 })

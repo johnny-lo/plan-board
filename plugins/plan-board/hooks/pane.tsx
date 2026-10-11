@@ -2,9 +2,10 @@ import type { EngineInterface } from 'claude-code'
 
 import { t } from './i18n.ts'
 import type { Key, Lang } from './i18n.ts'
-import { assignedText, changeLine, fit, historyLines, textWidth } from './lines.ts'
-import { bandCounts, blockedSteps, cardPosition, historyOf, isAnswered, itemStates, openCards, recentFor } from './view.ts'
-import type { Card, ItemState, Local, Plan, Step } from '../types'
+import { assignedText, changeLine, fit, foldText, historyLines, stamp, textWidth } from './lines.ts'
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, itemStates, openCards, recentFor } from './view.ts'
+import type { Row } from './view.ts'
+import type { Card, Entry, ItemState, Local, Plan, Step } from '../types'
 
 /** How many earlier entries a card shows. */
 const RECENT = 3
@@ -67,6 +68,38 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
   const firstId = open.find(card => !isSent(card))?.id
   const localLine = current.storage === 'local' ? <Text dimColor wrap="wrap">{t(lang, 'localMode')}</Text> : null
 
+  /** One entry of an item's history: a line to press for its reason. */
+  const logRow = (itemId: string, entry: Entry, isNested: boolean) => {
+    const [line, reason] = historyLines(entry, current, lang)
+    const whyKey = `why:${entry.id}`
+    return (
+      <Box key={`box:log:${itemId}:${entry.id}`} flexDirection="column" paddingLeft={isNested ? 2 : 0}>
+        <Button key={`log:${itemId}:${entry.id}`} plain label={line} onPress={() => actions.toggle(whyKey)} />
+        {reason !== undefined && mine.expanded.includes(whyKey) && (
+          <Box paddingLeft={2}>
+            <Text dimColor wrap="wrap">
+              {reason}
+            </Text>
+          </Box>
+        )}
+      </Box>
+    )
+  }
+
+  /** A row of an item's history: an entry, or a fold that opens into its entries. */
+  const historyRow = (itemId: string, row: Row) => {
+    if (row.kind === 'entry') return logRow(itemId, row.entry, false)
+    const foldKey = `fold:${row.key}`
+    const isOpen = mine.expanded.includes(foldKey)
+    const label = `${stamp(row.entries[0].at)} ${isOpen ? '▾' : '▸'} ${foldText(row.entries, lang)}`
+    return (
+      <Box key={`box:fold:${itemId}:${row.key}`} flexDirection="column">
+        <Button key={`fold:${itemId}:${row.key}`} plain label={label} onPress={() => actions.toggle(foldKey)} />
+        {isOpen && row.entries.map(entry => logRow(itemId, entry, true))}
+      </Box>
+    )
+  }
+
   const overview = () => {
     if (current.order.length === 0) {
       return (
@@ -116,21 +149,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
                       )
                     })}
                   <Text dimColor>{t(lang, 'logRule')}</Text>
-                  {historyOf(current, id).map(entry => {
-                    const lines = historyLines(entry, current, lang)
-                    return (
-                      <Box key={`log:${id}:${entry.id}`} flexDirection="column">
-                        <Text wrap="wrap">{lines[0]}</Text>
-                        {lines.length > 1 && (
-                          <Box paddingLeft={2}>
-                            <Text dimColor wrap="wrap">
-                              {lines[1]}
-                            </Text>
-                          </Box>
-                        )}
-                      </Box>
-                    )
-                  })}
+                  {foldHistory(historyOf(current, id)).map(row => historyRow(id, row))}
                 </Box>
               )}
             </Box>
@@ -235,10 +254,10 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
         {recent.length > 0 && (
           <Box flexDirection="column">
             <Text dimColor>{t(lang, 'recent')}</Text>
-            {recent.map(entry => (
-              <Box key={`recent:${card.id}:${entry.id}`} paddingLeft={2}>
+            {recent.map(row => (
+              <Box key={`recent:${card.id}:${row.kind === 'entry' ? row.entry.id : row.key}`} paddingLeft={2}>
                 <Text dimColor wrap="wrap">
-                  {historyLines(entry, current, lang)[0]}
+                  {row.kind === 'entry' ? historyLines(row.entry, current, lang)[0] : `${stamp(row.entries[0].at)} ${foldText(row.entries, lang)}`}
                 </Text>
               </Box>
             ))}

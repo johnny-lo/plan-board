@@ -136,3 +136,10 @@ test('action_card_messages', async () => {
     '- [a1] Run thoth checks approve → done (check it if you can, then resolve the card with resolve_decision)',
   )
 })
+
+test('forget_keeps_open_history_rows_of_entries_still_in_the_log', async () => {
+  const kept = entry('item.add', { item: { id: 'A', title: 'A', goal: 'g' } })
+  const plan = await planOf(kept, question('open'))
+  const local = { ...emptyLocal(), expanded: ['A', `fold:${kept.id}`, `why:${kept.id}`, 'fold:000000000fff', 'why:gone', 'open'] }
+  expect(forget(local, plan).expanded).toEqual(['A', `fold:${kept.id}`, `why:${kept.id}`, 'open'])
+})

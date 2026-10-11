@@ -90,16 +90,20 @@ export function markSent(local: Local, ids: string[], at: number): { local: Loca
   }
 }
 
-/** Drops what belongs to cards that are resolved or gone; expanded also holds item ids, which stay. */
+/** An open history row in `expanded`: fold:<entry id> or why:<entry id>. */
+const ROW = /^(?:fold|why):(.*)$/
+
+/** Drops what belongs to cards that are resolved or gone, and open history rows whose entry is gone; item ids stay while the item does. */
 export function forget(local: Local, plan: Plan): Local {
   const isOpen = (id: string): boolean => Object.hasOwn(plan.cards, id) && plan.cards[id].resolved === undefined
   const keepOpen = (table: Record<string, Pick>): Record<string, Pick> => Object.fromEntries(Object.entries(table).filter(([id]) => isOpen(id)))
-  return {
-    ...local,
-    staged: keepOpen(local.staged),
-    sent: keepOpen(local.sent),
-    expanded: local.expanded.filter(id => (Object.hasOwn(plan.cards, id) ? plan.cards[id].resolved === undefined : Object.hasOwn(plan.items, id))),
+  const entries = new Set(plan.applied.map(entry => entry.id))
+  const isKept = (id: string): boolean => {
+    const row = ROW.exec(id)
+    if (row !== null) return entries.has(row[1])
+    return Object.hasOwn(plan.cards, id) ? plan.cards[id].resolved === undefined : Object.hasOwn(plan.items, id)
   }
+  return { ...local, staged: keepOpen(local.staged), sent: keepOpen(local.sent), expanded: local.expanded.filter(isKept) }
 }
 
 export function isApproved(local: Local, cardId: string): boolean {
