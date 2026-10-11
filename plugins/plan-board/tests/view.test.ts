@@ -255,3 +255,10 @@ test('prototype_names_are_plain_ids', async () => {
   expect(bandCounts(plan, sent).waiting).toBe(0)
   expect(summary(plan, sent)).toContain('(sent, waiting for you to resolve)')
 })
+
+test('summary_shows_a_step_note', async () => {
+  const plan = await replay(
+    await logText([entry('item.add', { item: item('A') }), step('A', 's1'), entry('step.note', { step: 's1', note: 'waiting for review' })]),
+  )
+  expect(summary(plan, emptyLocal)).toContain('- [s1] s1 — todo, note: waiting for review')
+})

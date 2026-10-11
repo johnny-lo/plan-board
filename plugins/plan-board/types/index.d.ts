@@ -21,6 +21,8 @@ export type StepChange =
   | { kind: 'step.move'; data: { step: string; item: string; after?: string } }
   | { kind: 'step.assign'; data: { step: string; to: string } }
   | { kind: 'step.status'; data: { step: string; status: StepStatus; result?: string } }
+  /** Where a step stands now; an empty note clears it. Never shown in the change history. */
+  | { kind: 'step.note'; data: { step: string; note: string } }
 /** Links a document (a path from the repo root) to an item. Not an item-level change: it needs no approval. */
 export type LinkChange = { kind: 'item.link'; data: { item: string; doc: string } }
 export type CardOption = { label: string; effect: string; recommended?: boolean; reason?: string }
@@ -36,7 +38,7 @@ export type Change = ItemChange | LinkChange | StepChange | CardChange | EditCha
 export type Entry = Change & { id: string; at: string; why: string; basis: Basis }
 
 export type Item = { id: string; title: string; goal: string; steps: string[]; docs: string[] }
-export type Step = { id: string; item: string; title: string; status: StepStatus; assignee?: string; evidence?: { thoth?: string; result?: string } }
+export type Step = { id: string; item: string; title: string; status: StepStatus; assignee?: string; note?: string; evidence?: { thoth?: string; result?: string } }
 export type Card = CardSpec & { openedAt: string; resolved?: { outcome: string; choice?: string; at: string } }
 export type Flagged = { raw: string; hash: string; entry: Entry | null }
 /** Where the log was read from: the repo's plan/log.jsonl, or the text this machine keeps in $.store. */

@@ -234,3 +234,32 @@ test('renames_remember_the_previous_title_by_entry_id', async () => {
   expect(Object.keys(plan.previousNames).length).toBe(3)
   expect(plan.items.A.title).toBe('Gamma')
 })
+
+test('step_note_is_set_cleared_and_dropped_when_done', async () => {
+  const entries = [
+    entry('item.add', { item: item('A') }),
+    entry('step.add', { item: 'A', step: { id: 's1', title: 'one' } }),
+    entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+    entry('step.note', { step: 's1', note: 'waiting for review' }),
+    entry('step.note', { step: 's2', note: 'waiting for CI' }),
+    entry('step.status', { step: 's2', status: 'doing' }),
+    entry('step.note', { step: 'ghost', note: 'x' }),
+  ]
+  const plan = await replay(await logText(entries))
+  expect(plan.steps.s1.note).toBe('waiting for review')
+  expect(plan.steps.s2.note).toBe('waiting for CI')
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['unknown step: ghost'])
+  // A note is where a step stands now, not a change the user reads back.
+  expect(plan.itemLog.A.some((e) => e.kind === 'step.note')).toBe(false)
+
+  const later = await replay(
+    await logText([
+      ...entries.slice(0, 6),
+      entry('step.note', { step: 's1', note: '' }),
+      entry('step.status', { step: 's2', status: 'done', result: 'ok' }),
+    ]),
+  )
+  expect(later.steps.s1.note).toBeUndefined()
+  expect(later.steps.s2.note).toBeUndefined()
+  expect(later.steps.s2.status).toBe('done')
+})

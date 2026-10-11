@@ -206,8 +206,11 @@ const STATUSES = ['todo', 'doing', 'done']
 
 const updateStep = guard((ctx, input) => {
   const o = objectOf(input)
-  const why = text(o, 'why')
   const ops = list(o, 'ops')
+  const isNotesOnly = ops.every((raw) => isObj(raw) && raw.action === 'note')
+  const isBlank = o.why === undefined || (typeof o.why === 'string' && o.why.trim() === '')
+  // A call that only notes where steps stand may leave out why: each note is its own reason.
+  const why = isNotesOnly && isBlank ? '' : text(o, 'why')
   let thoth: string | undefined
   let result: string | undefined
   if (o.evidence !== undefined) {
@@ -255,6 +258,14 @@ const updateStep = guard((ctx, input) => {
         said.push(to === '' ? `Cleared the assignee of step ${field('step')}.` : `Assigned step ${field('step')} to ${to}.`)
         break
       }
+      case 'note': {
+        if (typeof raw.note !== 'string') return fail(`${at}.note must be a string (empty to clear)`)
+        const note = raw.note.trim()
+        const stepId = field('step')
+        entries.push(make(ctx, 'step.note', { step: stepId, note }, why || (note === '' ? 'note cleared' : note), ai))
+        said.push(note === '' ? `Cleared the note of step ${stepId}.` : `Noted step ${stepId}.`)
+        break
+      }
       case 'link': {
         const item = field('item')
         const doc = field('doc')
@@ -276,7 +287,7 @@ const updateStep = guard((ctx, input) => {
         break
       }
       default:
-        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, link`)
+        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, note, link`)
     }
   })
   return accept(ctx, entries, said.join(' '))
@@ -391,17 +402,18 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
     run: applyChange,
   },
   update_step: {
-    description: 'Add, edit, remove, move, assign or set the status of steps, or link a document (a path from the repo root, such as a superpowers spec or plan) to an item, recording why.',
+    description:
+      'Add, edit, remove, move, assign, note or set the status of steps, or link a document (a path from the repo root, such as a superpowers spec or plan) to an item, recording why.',
     inputSchema: {
       type: 'object',
       properties: {
-        why: { ...str, description: 'One-line reason for the change.' },
+        why: { ...str, description: 'One-line reason for the change; may be left out when every op is a note.' },
         ops: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'link'] },
+              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'note', 'link'] },
               item: str,
               doc: { ...str, description: 'For link: path of the document from the repo root.' },
               step: str,
@@ -409,6 +421,7 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
               after: str,
               to: { ...str, description: 'Assignee; empty string clears it.' },
               status: { type: 'string', enum: ['todo', 'doing', 'done'] },
+              note: { ...str, description: 'For note: where the step stands or who it waits on; empty string clears it.' },
             },
             required: ['action'],
           },
@@ -419,7 +432,7 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
           properties: { thoth: { ...str, description: 'Passed Thoth task id.' }, result: { ...str, description: 'One-line result.' } },
         },
       },
-      required: ['why', 'ops'],
+      required: ['ops'],
     },
     run: updateStep,
   },

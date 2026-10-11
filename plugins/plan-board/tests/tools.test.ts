@@ -300,7 +300,8 @@ test('schemas_list_required_fields', () => {
   expect(required('add_decision')).toEqual(expect.arrayContaining(['question', 'why', 'options']))
   expect(required('propose_change')).toEqual(expect.arrayContaining(['question', 'why', 'changes']))
   expect(required('apply_change')).toEqual(['card'])
-  expect(required('update_step')).toEqual(expect.arrayContaining(['why', 'ops']))
+  // why may be left out when every op is a note; the tool checks the rest.
+  expect(required('update_step')).toEqual(['ops'])
   expect(required('resolve_decision')).toEqual(expect.arrayContaining(['card', 'outcome']))
   expect(required('resolve_direct_edit')).toEqual(expect.arrayContaining(['action', 'summary']))
   for (const tool of Object.values(TOOLS)) {
@@ -407,4 +408,25 @@ test('keeping_a_flagged_link_needs_no_card', async () => {
   const plan = await planOf([entry('item.add', { item: item('A') })], link + '\n')
   expect(plan.flagged.length).toBe(1)
   good(TOOLS.resolve_direct_edit.run(ctxOf(plan), { action: 'keep', summary: 'a link' }))
+})
+
+test('update_step_note_needs_no_why_when_alone', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1'), step('A', 's2')])
+  const run = (input: object) => TOOLS.update_step.run(ctxOf(plan), input)
+
+  const noted = good(run({ ops: [{ action: 'note', step: 's1', note: ' waiting for review ' }, { action: 'note', step: 's2', note: '   ' }] }))
+  expect(noted.entries.map((e) => e.kind)).toEqual(['step.note', 'step.note'])
+  expect(noted.entries.map((e) => e.data)).toEqual([{ step: 's1', note: 'waiting for review' }, { step: 's2', note: '' }])
+  expect(noted.entries.map((e) => e.why)).toEqual(['waiting for review', 'note cleared'])
+  expect(noted.entries.every((e) => e.basis.type === 'ai')).toBe(true)
+  expect(noted.message).toContain('s1')
+
+  const explained = good(run({ why: 'review started', ops: [{ action: 'note', step: 's1', note: 'in review' }] }))
+  expect(explained.entries[0].why).toBe('review started')
+  good(run({ why: '  ', ops: [{ action: 'note', step: 's1', note: 'in review' }] }))
+
+  expect(bad(run({ ops: [{ action: 'note', step: 's1', note: 'x' }, { action: 'status', step: 's2', status: 'doing' }] }))).toContain('why')
+  expect(bad(run({ ops: [{ action: 'note', step: 's1' }] }))).toContain('note')
+  expect(bad(run({ ops: [{ action: 'note', step: 'ghost', note: 'x' }] }))).toContain('unknown step')
+  expect(JSON.stringify(TOOLS.update_step.inputSchema)).toContain('"note"')
 })

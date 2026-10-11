@@ -107,6 +107,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, lang: L
                         <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
                           <Text>{`${markOf(step, waiting !== undefined, lang)} ${step.title}`}</Text>
                           {step.assignee !== undefined && <Text dimColor>{assignedText(step.assignee, lang)}</Text>}
+                          {step.note !== undefined && <Text dimColor>{step.note}</Text>}
                           {note !== '' && <Text dimColor>{note}</Text>}
                         </Box>
                       )

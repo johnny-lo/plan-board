@@ -40,6 +40,7 @@ export function summary(plan: Plan, local: Local): string {
       const step = plan.steps[stepId]
       let line = `   - [${stepId}] ${step.title} — ${step.status}`
       if (step.assignee !== undefined) line += `, assigned to ${step.assignee}`
+      if (step.note !== undefined) line += `, note: ${step.note}`
       if (step.evidence?.thoth !== undefined) line += `, thoth ${step.evidence.thoth}`
       else if (step.evidence?.result !== undefined) line += `, result: ${step.evidence.result}`
       if (blocked.has(stepId)) line += `, blocked by card ${blocking.get(stepId)}`

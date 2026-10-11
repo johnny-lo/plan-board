@@ -93,6 +93,8 @@ function hasValidData(entry: Entry): boolean {
       return isString(d.step) && isString(d.to)
     case 'step.status':
       return isString(d.step) && (d.status === 'todo' || d.status === 'doing' || d.status === 'done') && isOptString(d.result)
+    case 'step.note':
+      return isString(d.step) && isString(d.note)
     case 'card.open':
       return isCardSpec(d.card)
     case 'card.resolve':
@@ -239,6 +241,15 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       if (status !== 'done') delete target.evidence
       else if (entry.basis.type === 'thoth') target.evidence = { thoth: entry.basis.task }
       else target.evidence = { result }
+      // A done step waits for nothing.
+      if (status === 'done') delete target.note
+      return null
+    }
+    case 'step.note': {
+      const { step, note } = entry.data
+      if (!has(plan.steps, step)) return `unknown step: ${step}`
+      if (note === '') delete plan.steps[step].note
+      else plan.steps[step].note = note
       return null
     }
     case 'card.open': {
@@ -361,6 +372,8 @@ export async function replay(text: string, storage: Storage = 'repo'): Promise<P
       continue
     }
     plan.applied.push(entry)
+    // A note is where a step stands now, not a change the user reads back.
+    if (entry.kind === 'step.note') continue
     for (const id of new Set([...before, ...touchedAfter(entry)])) (plan.itemLog[id] ??= []).push(entry)
   }
   return plan

@@ -665,6 +665,19 @@ test('assignee_ids_are_hidden_in_english_history_but_kept_for_the_model', async 
   expect(t('zh-TW', 'assignedToTask' as never)).toBe('派給 Thoth 任務')
 })
 
+test('a_step_note_shows_beside_the_step_but_not_in_the_history', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), entry('step.note', { step: S2, note: '等 Thoth 審查' })])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ type: 'Text', text: '等 Thoth 審查' })).toBeDefined()
+    const seen = await texts(ui)
+    expect(seen.filter(text => text.includes('等 Thoth 審查'))).toHaveLength(1)
+    await ui.unmount()
+  }
+})
+
 test('history_shows_the_old_name_of_a_rename', ZH, async ($, on) => {
   const w = await start($, on, [
     ...board(),

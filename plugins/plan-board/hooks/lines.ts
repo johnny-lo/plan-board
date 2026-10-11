@@ -108,6 +108,8 @@ export function changeLine(change: Change, plan: Plan, lang: Lang, previous?: st
       const status = t(lang, change.data.status === 'done' ? 'stepDone' : change.data.status === 'doing' ? 'stepDoing' : 'stepTodo')
       return `${t(lang, 'kindStep')} ${t(lang, 'stepStatus', { step: name(change.data.step), status })}`
     }
+    case 'step.note':
+      return `${t(lang, 'kindStep')} ${t(lang, 'stepNote', { step: name(change.data.step), note: change.data.note })}`
     case 'card.open':
       return `${t(lang, 'kindCard')} ${t(lang, 'cardOpen', { question: change.data.card.question })}`
     case 'card.resolve':
