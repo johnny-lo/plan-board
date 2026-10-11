@@ -356,3 +356,152 @@
   - `plan/log.jsonl` 沒建成：說沒建成、什麼都沒改、計畫還在這台電腦。
   - `plan/log.jsonl` 建成了，之後的步驟出錯（例如刪本機那份失敗）：說計畫已搬進 `plan/log.jsonl`，本機那份還留著。
 - 給 AI 的錯誤（工具呼叫的 `deny`）不在這次範圍，照舊英文。
+
+## 15. 試用回饋（2026-10-11 加）
+
+試用時 AI 回報了五個不順的地方。使用者選的：
+
+- 步驟備註寫進 log、跟著 git 走，但變動紀錄不顯示。
+- 「待你處理」卡和決定卡放在同一個分頁，輸入框上方那列合計一個數。
+- 變動紀錄只在項目裡收，總表最上面不加「最近」那段。
+
+其餘照回饋的建議。本節改動第 3.2、3.4、4.1、4.2、5.3、6.1、6.2、6.3 節。
+
+### 15.1 步驟備註
+
+回饋：步驟沒有「現在卡在哪」的欄位，AI 只好拿標題當狀態，改一次就多一筆紀錄，標題也一直變。
+
+- 步驟多一個欄位 `note?: string`。
+- 新的紀錄種類 `step.note`，`data: { step, note }`。`note` 是空字串 = 清掉備註。步驟不存在 → 略過，跟其他 `step.*` 一樣。
+- 步驟標成做完（`step.status` 的 `status` 是 `done`，或 15.3 新增時就是 `done`）時，備註自動清掉。改成 `todo`、`doing` 不動備註。
+- `update_step` 新的 op：`{action: 'note', step, note}`。
+- 一次呼叫的 op 全部是 `note` 時，`why` 可以不給：每筆紀錄的 `why` 就用備註的內容，清掉備註時寫 `note cleared`。只要有一個 op 不是 `note`，`why` 照舊必填。
+- 顯示：
+  - 總表的步驟那一行，在派給誰後面用淡色字顯示備註。
+  - 給 AI 的摘要，步驟那一行加上 `, note: {note}`。
+  - **不出現在變動紀錄**：重算時 `step.note` 不收進 `itemLog`，所以項目的變動紀錄和卡片的「之前：」都看不到它。
+- 備註不算項目層的改動：被直接改過的 `step.note` 行由 AI 自己 `keep` 或 `drop`，不用開卡。
+
+### 15.2 待你處理卡
+
+回饋：要使用者動手、但不用選的事（例如「在終端機跑 `thoth checks approve`」）沒有對應的卡片。`add_decision` 一定要 2 到 4 個選項，AI 只好寫在對話裡。
+
+- 卡片多一種 `type`：`action`。`card.open` 的 `card` 是 `{id, type: 'action', item?, step?, question, why, options: [], command?}`。
+  - `question` 放要使用者做的那一句話。沿用這個欄位，名稱表、位置、紀錄的程式就不用分兩套。
+  - `command`：可選，要執行的指令原文。
+  - 不存 `blocking`：這種卡的回覆一律立刻送出（見下）。
+- 新工具 `add_user_action`：
+
+  | 輸入 | 檢查 | 寫入 |
+  |---|---|---|
+  | `action`（一句話）、`why`、`command?`、`item?`、`step?` | `action`、`why` 不能空；給了 `command` 就不能空；項目和步驟要存在，步驟要在那個項目裡 | 一筆 `card.open`（`action`） |
+
+- 結案用 `resolve_decision`，說明改成「結掉決定卡或待你處理卡」。`apply_change` 遇到不是提案的卡，錯誤訊息改成「這張卡不是提案，用 resolve_decision 結案」（英文）。
+- 窗格，和決定卡在同一個分頁：
+
+  ```
+  ╭ 在終端機跑 thoth checks approve                       ✕ ╮
+  │ 照試用回饋改 plan-board · 第 2 項 · 卡在「實作」        │
+  │ 為什麼：新的檢查要人核准才會跑                          │
+  │ 指令：thoth checks approve                              │
+  │ 1 做好了                                                │
+  │ [或寫下你的想法…（立即送出）]                            │
+  ╰────────────────────────────────────────────────────────╯
+  ```
+
+  - 「為什麼：」不是「為什麼現在問：」。沒有「之前：」。
+  - 「做好了」、✕、送出想法都**立刻**送給 AI，不暫存，跟 `blocking` 的決定卡一樣。最上面那張的「做好了」熱鍵是 `1`。
+  - 按了「做好了」或 ✕ 之後，卡片變淡，顯示「已送出，等 AI 確認」。只送了想法的卡照 13.2 第 1 點，維持可以回答。
+  - 卡片沒有執行指令的按鈕，只顯示指令文字。原因：像 `thoth checks approve` 這種指令，Thoth 規定只能由人在終端機執行。
+  - 手機上沒有輸入框，只有「做好了」和 ✕。
+- 送給 AI 的文字（英文）：
+  - 做好了：`Done by the user: "{question}" [{id}]. Check it if you can, then resolve the card with resolve_decision.`
+  - 略過、只有想法：沿用現在決定卡的說法。
+- 排序：未結案的卡裡，待你處理卡排在最前面；其他照現在的規則（`blocking`、項目順序、開卡時間）。
+- 分頁按鈕改成「等你（N）」（英文 `Waiting for you (N)` 不變）。輸入框上方那列改成「計畫：{doing} 項進行中 · {waiting} 件事等你」（英文 `Plan: {doing} in progress · {waiting} waiting for you`）。`waiting` 照舊是還沒回覆的未結案卡片，兩種卡合計。沒有卡時的「目前沒有待你決定的事」改成「目前沒有等你的事」。
+- 步驟：有未結案的待你處理卡指到它時，一樣顯示 ⚑，右邊寫「等你處理：{question}」（英文 `waiting for you to: {question}`）。決定卡照舊寫「等你決定：…」。
+- 變動紀錄：開卡寫「卡片 請你「{question}」」（英文 `Card asked you to "{question}"`）；結案照舊。
+- 給 AI 的摘要：未結案卡片那一行的類型寫 `{action}`，其餘照舊。
+
+### 15.3 新增步驟時一起設定
+
+回饋：新增步驟時不能同時設狀態和派給誰，要再呼叫一次，又多兩筆紀錄。查過：新步驟的 id 是工具產生的，同一次呼叫的其他 op 指不到它，所以現在一定要分兩次呼叫。
+
+- `update_step` 的 `add` op 多四個可選欄位：`status`、`to`、`note`，以及 15.4 的 `evidence`。
+- 仍然只寫**一筆** `step.add`，`data` 多四個可選欄位：`status?`、`to?`、`note?`、`result?`。
+  - `status` 是 `done` 時要有 `evidence`（15.4），`result` 和依據的規則跟 `step.status` 一樣。
+  - `status` 是 `done` 又帶 `note` → 拒絕：做完的步驟沒有備註。
+  - `to` 是空字串，等於沒給。
+- 重算：一次設好標題、狀態、派給誰、備註、證據。
+- 變動紀錄：`新增「{step}」到「{item}」（{狀態}、{派給誰}）`，括號裡只列有給的；狀態是 `todo` 不列。英文同義。
+- 回給 AI 的結果，例如：`Added step {id} to item {item} (doing, assigned to {to}).`
+- 舊版外掛：讀到這種 `step.add` 會忽略多出來的欄位，步驟顯示成還沒開始、沒派給誰；`step.note` 和 `action` 卡會被略過，列在給 AI 的「略過的紀錄」。外掛更新後就對了。`plugin.json` 的版本改成 `0.2.0`。
+
+### 15.4 證據跟著動作走
+
+回饋：一次呼叫裡有好幾個動作時，看不出 evidence 掛在哪一個。查過，這是 bug：
+
+- 帶 `evidence.thoth` 的那次呼叫，裡面**每一筆**紀錄的依據都是 Thoth，改名、新增也顯示「Thoth pass」。
+- 帶 `evidence.result` 時，同一次呼叫裡標成 `doing`、`todo` 的紀錄也存了 `result`。
+
+改成：
+
+- `evidence` 從整次呼叫移到 op 上：`{action: 'status', step, status: 'done', evidence: {thoth} 或 {result}}`；15.3 的 `add` 一樣。
+- 標 `done` 的 op 自己沒有 `evidence.thoth` 或 `evidence.result` → 拒絕（空白字串算沒有，跟現在一樣）。
+- `evidence` 寫在不是標 `done` 的 op 上 → 拒絕：`evidence goes only on an op that sets status done`。
+- 整次呼叫還帶 `evidence` → 拒絕：`evidence now goes on the op that marks the step done: ops[i].evidence`。
+- 依據：只有帶 `evidence.thoth` 的那一筆是 `{type: 'thoth', task}`，同一次呼叫的其他紀錄都是 `{type: 'ai'}`。`result` 只存在標 `done` 的那一筆。
+- 已經寫進 log 的舊紀錄不改（只能往後加）。
+
+### 15.5 變動紀錄收合
+
+回饋：步驟的瑣事（改名、指派、doing→done）把使用者層級的變動淹掉；原因太長。
+
+- 紀錄分兩類：
+  - **步驟瑣事**：`step.add`、`step.edit`、`step.remove`、`step.move`、`step.assign`、`step.status`、`item.link`。
+  - **其他**，照舊每筆一行：`item.*`（`item.link` 除外）、`card.open`、`card.resolve`、`edit.keep`、`edit.drop`。
+  - `step.note` 不顯示（15.1）。
+- 項目展開後的變動紀錄（新的在上），連續 2 筆以上的步驟瑣事合成一行：
+
+  ```
+  10/11 14:40 ▸ 步驟：新增 4 個、開始 1 個
+  ```
+
+  - 時間是這一段裡最新那筆的時間。
+  - 數量依序是：新增、做完、開始（`doing`）、改回還沒開始（`todo`）、改名、刪掉、移動、改派（含收回）、連上文件；是 0 的不列。英文 `Steps: 4 added, 1 started`，其餘是 `done`、`back to not started`、`renamed`、`removed`、`moved`、`reassigned`、`docs linked`。`step.add` 帶了狀態也只算「新增」。
+  - 按了展開成一筆一行（往右縮排），再按收起來。展開狀態用這一段**最舊**那筆的 id 記，所以之後有新的步驟瑣事接上來，已經展開的不會被收起來。
+  - 只有 1 筆的步驟瑣事照常一筆一行。
+- 原因預設收起來：每一行（包括展開後的每一筆）按一下，底下才多出「原因：…」，再按收起來。合成的那一行本身沒有原因。
+- 卡片的「之前：」：取收合之後的最近 3 行，合成的一行算一行、不能展開，一樣不顯示原因。
+- 展開狀態跟現在一樣存在 `$.store` 的本機窗格狀態；對應的紀錄不在了（例如被 `drop`），就忘掉。
+
+### 15.6 給 AI 的說明
+
+加上這幾條：
+
+- `why`、卡片的問題、項目和步驟的標題、結案的 `outcome` 都是寫給使用者看的：用使用者的語言和白話，不放 id，也不放使用者沒用過的檔名或函式名稱。
+- 步驟「現在卡在哪、在等誰」寫在 `note`，不要改標題；做完時備註會自己清掉。
+- 新增步驟時，狀態、派給誰、備註直接寫在 `add` 上。
+- 證據寫在標做完的那個 op 上。
+- 要使用者自己動手的事（在終端機跑指令、核准、登入），用 `add_user_action` 開卡，不要只寫在對話裡。使用者回「做好了」之後，能查就先查，再結案。
+
+擋住直接改檔時的提示（6.3）也列進 `add_user_action`。
+
+### 15.7 測試與文件
+
+- 單元測試：
+  - `step.note`：寫入、清掉、標做完自動清掉；不進 `itemLog`；摘要有 `note`。
+  - `update_step`：只有 `note` 時 `why` 可以省；混了其他 op 就必填。
+  - `add` 帶 `status`、`to`、`note`、`evidence` 只寫一筆；`done` 沒證據拒絕；`done` 帶 `note` 拒絕。
+  - 證據：Thoth 依據只落在標做完的那一筆；整次呼叫帶 `evidence` 拒絕；不是標 `done` 的 op 帶 `evidence` 拒絕；`doing` 的紀錄沒有 `result`。
+  - `add_user_action` 的檢查與寫入；`resolve_decision` 結得掉它；`apply_change` 拒絕它。
+  - 卡片排序：待你處理卡在最前面。
+  - 收合：連續瑣事合成一行、數量的文字（兩種語言）、只有 1 筆不合、`item.link` 算瑣事、`step.note` 不出現、卡片的「之前：」用收合後的行。
+  - 兩張對照表的鍵一樣（既有測試）。
+  - 舊格式（沒有新欄位）的 log 重算出的計畫跟現在一樣。
+- 外掛測試，terminal 和 desktop 都跑（13.2 第 3 點）：
+  - 待你處理卡：顯示指令；「做好了」和 ✕ 立刻送出；送出後顯示「已送出，等 AI 確認」；步驟顯示「等你處理：…」；輸入框上方那列合計兩種卡。
+  - 備註顯示在步驟後面，不出現在變動紀錄。
+  - 合成的一行按了展開；每一行按了顯示原因，再按收起來。
+  - zh-TW 畫面上沒有任何編號：既有測試加上待你處理卡和合成的一行。
+- 文件：README 英文和 zh-TW 兩份的「Items and steps」照本節更新（備註、待你處理卡、新增時一起設定、證據跟著動作、紀錄收合）。
