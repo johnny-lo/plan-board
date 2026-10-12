@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { sha16 } from '../hooks/checksum.ts'
 import { GUIDE, summary } from '../hooks/guide.ts'
 import { emptyPlan, replay } from '../hooks/replay.ts'
-import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor } from '../hooks/view.ts'
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor, repoLabel } from '../hooks/view.ts'
 import { entry, logText } from './fixtures.ts'
 import type { Entry, Local } from '../types'
 
@@ -312,4 +312,31 @@ test('guide_covers_notes_actions_evidence_and_plain_words', () => {
   expect(GUIDE).toContain('on the op that sets status done')
   expect(GUIDE).toContain('add_user_action')
   expect(GUIDE).toContain('plain words')
+})
+
+test('summary_shows_repos_and_their_short_names', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 's1' }, repo: 'post_backend_eruncard' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 's2' }, repo: 'auth-center' }),
+      step('A', 's3'),
+      entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' }),
+      entry('repo.name', { repo: 'thoth', name: 'Thoth' }),
+    ]),
+  )
+  const out = summary(plan, emptyLocal)
+  expect(out).toContain('- [s1] s1 — todo, repo: post_backend_eruncard (ERC後端)\n')
+  expect(out).toContain('- [s2] s2 — todo, repo: auth-center\n')
+  expect(out).toContain('- [s3] s3 — todo\n')
+  expect(out).toContain('Repo names: post_backend_eruncard = ERC後端, thoth = Thoth')
+  const bare = await replay(await logText([entry('item.add', { item: item('A') }), step('A', 's1')]))
+  expect(summary(bare, emptyLocal)).not.toContain('Repo names')
+})
+
+test('repo_label_is_the_short_name_else_the_folder', async () => {
+  const plan = await replay(await logText([entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' })]))
+  expect(repoLabel(plan, 'post_backend_eruncard')).toBe('ERC後端')
+  expect(repoLabel(plan, 'auth-center')).toBe('auth-center')
+  expect(repoLabel(plan, 'toString')).toBe('toString')
 })

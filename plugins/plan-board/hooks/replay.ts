@@ -15,6 +15,7 @@ export function emptyPlan(storage: Storage = 'repo'): Plan {
     itemLog: table(),
     names: table(),
     previousNames: table(),
+    repoNames: table(),
     flagged: [],
     skipped: [],
   }
@@ -97,7 +98,8 @@ function hasValidData(entry: Entry): boolean {
         (d.status === undefined || isStatus(d.status)) &&
         isOptString(d.to) &&
         isOptString(d.note) &&
-        isOptString(d.result)
+        isOptString(d.result) &&
+        isOptString(d.repo)
       )
     case 'step.edit':
       return isString(d.step) && isString(d.title)
@@ -111,6 +113,10 @@ function hasValidData(entry: Entry): boolean {
       return isString(d.step) && isStatus(d.status) && isOptString(d.result)
     case 'step.note':
       return isString(d.step) && isString(d.note)
+    case 'step.repo':
+      return isString(d.step) && isString(d.repo)
+    case 'repo.name':
+      return isString(d.repo) && d.repo.trim() !== '' && isString(d.name)
     case 'card.open':
       return isCardSpec(d.card)
     case 'card.resolve':
@@ -210,11 +216,12 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       return null
     }
     case 'step.add': {
-      const { item, step, after, status, to, note, result } = entry.data
+      const { item, step, after, status, to, note, result, repo } = entry.data
       if (!has(plan.items, item)) return `unknown item: ${item}`
       if (has(plan.steps, step.id)) return `step exists: ${step.id}`
       const added: Step = { id: step.id, item, title: step.title, status: status ?? 'todo' }
       if (to !== undefined && to !== '') added.assignee = to
+      if (repo !== undefined && repo !== '') added.repo = repo
       if (added.status === 'done') added.evidence = proofOf(entry, result)
       else if (note !== undefined && note !== '') added.note = note
       plan.steps[step.id] = added
@@ -269,6 +276,19 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       if (!has(plan.steps, step)) return `unknown step: ${step}`
       if (note === '') delete plan.steps[step].note
       else plan.steps[step].note = note
+      return null
+    }
+    case 'step.repo': {
+      const { step, repo } = entry.data
+      if (!has(plan.steps, step)) return `unknown step: ${step}`
+      if (repo === '') delete plan.steps[step].repo
+      else plan.steps[step].repo = repo
+      return null
+    }
+    case 'repo.name': {
+      const { repo, name } = entry.data
+      if (name === '') delete plan.repoNames[repo]
+      else plan.repoNames[repo] = name
       return null
     }
     case 'card.open': {

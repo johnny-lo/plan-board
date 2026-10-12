@@ -296,3 +296,63 @@ test('old_logs_replay_the_same', async () => {
   expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'done', evidence: { thoth: 'T1' } })
   expect(plan.steps.s2).toEqual({ id: 's2', item: 'A', title: 'two v2', status: 'doing' })
 })
+
+test('step_repo_tags_untags_and_skips_an_unknown_step', async () => {
+  const entries = [
+    entry('item.add', { item: item('A') }),
+    entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, repo: 'auth-center' }),
+    entry('step.add', { item: 'A', step: { id: 's2', title: 'two' }, repo: '' }),
+    entry('step.add', { item: 'A', step: { id: 's3', title: 'three' } }),
+    entry('step.repo', { step: 's3', repo: 'post_backend_eruncard' }),
+    entry('step.repo', { step: 'ghost', repo: 'auth-center' }),
+  ]
+  const plan = await replay(await logText(entries))
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'todo', repo: 'auth-center' })
+  expect(Object.hasOwn(plan.steps.s2, 'repo')).toBe(false)
+  expect(plan.steps.s3.repo).toBe('post_backend_eruncard')
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['unknown step: ghost'])
+  // A tag is a step change: it is on the item's history.
+  expect(plan.itemLog.A.filter((e) => e.kind === 'step.repo')).toHaveLength(1)
+
+  const later = await replay(
+    await logText([...entries, entry('step.repo', { step: 's1', repo: '' }), entry('step.repo', { step: 's3', repo: 7 })]),
+  )
+  expect(Object.hasOwn(later.steps.s1, 'repo')).toBe(false)
+  expect(later.steps.s3.repo).toBe('post_backend_eruncard')
+  expect(later.skipped.map((s) => s.reason)).toEqual(['unknown step: ghost', 'malformed entry: bad data for step.repo'])
+})
+
+test('repo_names_are_set_and_dropped_and_stay_off_item_histories', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' }),
+      entry('repo.name', { repo: 'auth-center', name: '認證中心' }),
+      entry('repo.name', { repo: 'auth-center', name: '' }),
+      entry('repo.name', { repo: '  ', name: 'blank' }),
+    ]),
+  )
+  expect(plan.repoNames).toEqual({ post_backend_eruncard: 'ERC後端' })
+  expect(Object.getPrototypeOf(plan.repoNames)).toBeNull()
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['malformed entry: bad data for repo.name'])
+  expect(plan.applied.filter((e) => e.kind === 'repo.name')).toHaveLength(3)
+  // A short name points at no item or step, so no item's history shows it.
+  expect(plan.itemLog.A.some((e) => e.kind === 'repo.name')).toBe(false)
+})
+
+test('logs_without_repos_replay_the_same', async () => {
+  // Lines written before 0.3.0: no step.repo, no repo.name, no repo on step.add.
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, status: 'doing', to: 'claude-b' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+      entry('step.status', { step: 's2', status: 'done', result: 'ok' }),
+    ]),
+  )
+  expect(plan.skipped).toEqual([])
+  expect(plan.repoNames).toEqual({})
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'doing', assignee: 'claude-b' })
+  expect(plan.steps.s2).toEqual({ id: 's2', item: 'A', title: 'two', status: 'done', evidence: { result: 'ok' } })
+  expect(Object.values(plan.steps).some((s) => Object.hasOwn(s, 'repo'))).toBe(false)
+})

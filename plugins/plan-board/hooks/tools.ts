@@ -70,6 +70,7 @@ function clonePlan(plan: Plan): Plan {
   copy.itemLog = Object.assign(Object.create(null), copy.itemLog)
   copy.names = Object.assign(Object.create(null), copy.names)
   copy.previousNames = Object.assign(Object.create(null), copy.previousNames)
+  copy.repoNames = Object.assign(Object.create(null), copy.repoNames)
   return copy
 }
 
@@ -235,6 +236,8 @@ const updateStep = guard((ctx, input) => {
   const why = isNotesOnly && isBlank ? '' : text(o, 'why')
   const entries: Entry[] = []
   const said: string[] = []
+  // Short names as this call leaves them, so two ops of one call cannot give two repos the same name.
+  const names: Record<string, string> = Object.assign(Object.create(null), ctx.plan.repoNames)
   ops.forEach((raw, i) => {
     if (!isObj(raw)) return fail(`ops[${i}] must be an object`)
     const at = `ops[${i}]`
@@ -251,14 +254,18 @@ const updateStep = guard((ctx, input) => {
         const status = statusOf(raw, at)
         const to = optText(raw, 'to')
         const note = optText(raw, 'note')?.trim()
+        const repo = optText(raw, 'repo')?.trim()
         if (status === 'done' && note) return fail(`${at}: a step added as done has no note`)
         const proof: { basis: Basis; result?: string } = status === 'done' ? proofOf(raw, at) : { basis: ai }
         if (status !== undefined && status !== 'todo') data.status = status
         if (to) data.to = to
         if (note) data.note = note
+        if (repo) data.repo = repo
         if (proof.result !== undefined) data.result = proof.result
         entries.push(make(ctx, 'step.add', data, why, proof.basis))
-        const how = [status !== undefined && status !== 'todo' ? status : '', to ? `assigned to ${to}` : ''].filter((part) => part !== '')
+        const how = [status !== undefined && status !== 'todo' ? status : '', to ? `assigned to ${to}` : '', repo ? `repo ${repo}` : ''].filter(
+          (part) => part !== '',
+        )
         said.push(`Added step ${id} to item ${item}${how.length > 0 ? ` (${how.join(', ')})` : ''}.`)
         break
       }
@@ -292,6 +299,27 @@ const updateStep = guard((ctx, input) => {
         said.push(note === '' ? `Cleared the note of step ${stepId}.` : `Noted step ${stepId}.`)
         break
       }
+      case 'repo': {
+        if (typeof raw.repo !== 'string') return fail(`${at}.repo must be a string (empty to untag)`)
+        const repo = raw.repo.trim()
+        const stepId = field('step')
+        entries.push(make(ctx, 'step.repo', { step: stepId, repo }, why, ai))
+        said.push(repo === '' ? `Untagged step ${stepId}.` : `Tagged step ${stepId} with repo ${repo}.`)
+        break
+      }
+      case 'repo_name': {
+        const repo = field('repo').trim()
+        if (typeof raw.name !== 'string') return fail(`${at}.name must be a string (empty to drop the short name)`)
+        const name = raw.name.trim()
+        // Two repos under one name could not be told apart; the same name again for the same repo is no clash.
+        const other = name === '' ? undefined : Object.keys(names).find((folder) => folder !== repo && names[folder] === name)
+        if (other !== undefined) return fail(`short name ${name} is already used by ${other}`)
+        if (name === '') delete names[repo]
+        else names[repo] = name
+        entries.push(make(ctx, 'repo.name', { repo, name }, why, ai))
+        said.push(name === '' ? `Dropped the short name of repo ${repo}.` : `Repo ${repo} is shown as ${name}.`)
+        break
+      }
       case 'link': {
         const item = field('item')
         const doc = field('doc')
@@ -311,7 +339,7 @@ const updateStep = guard((ctx, input) => {
         break
       }
       default:
-        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, note, link`)
+        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, note, repo, repo_name, link`)
     }
   })
   return accept(ctx, entries, said.join(' '))
@@ -444,7 +472,7 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
   },
   update_step: {
     description:
-      'Add, edit, remove, move, assign, note or set the status of steps, or link a document (a path from the repo root, such as a superpowers spec or plan) to an item, recording why.',
+      'Add, edit, remove, move, assign, note, tag with a repo or set the status of steps; give a repo a short name; or link a document (a path from the repo root, such as a superpowers spec or plan) to an item, recording why.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -454,7 +482,7 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
           items: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'note', 'link'] },
+              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'note', 'repo', 'repo_name', 'link'] },
               item: str,
               doc: { ...str, description: 'For link: path of the document from the repo root.' },
               step: str,
@@ -468,6 +496,11 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
                 properties: { thoth: { ...str, description: 'Passed Thoth task id.' }, result: { ...str, description: 'One-line result.' } },
               },
               note: { ...str, description: 'For note: where the step stands or who it waits on; empty string clears it.' },
+              repo: {
+                ...str,
+                description: "For repo and repo_name, and optionally on add: the repo's folder name, such as auth-center; on repo an empty string untags the step.",
+              },
+              name: { ...str, description: 'For repo_name: the short name the user sees for that repo; empty string drops it.' },
             },
             required: ['action'],
           },

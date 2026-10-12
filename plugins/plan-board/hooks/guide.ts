@@ -44,6 +44,7 @@ export function summary(plan: Plan, local: Local): string {
       const step = plan.steps[stepId]
       let line = `   - [${stepId}] ${step.title} — ${step.status}`
       if (step.assignee !== undefined) line += `, assigned to ${step.assignee}`
+      if (step.repo !== undefined) line += `, repo: ${step.repo}${Object.hasOwn(plan.repoNames, step.repo) ? ` (${plan.repoNames[step.repo]})` : ''}`
       if (step.note !== undefined) line += `, note: ${step.note}`
       if (step.evidence?.thoth !== undefined) line += `, thoth ${step.evidence.thoth}`
       else if (step.evidence?.result !== undefined) line += `, result: ${step.evidence.result}`
@@ -52,6 +53,8 @@ export function summary(plan: Plan, local: Local): string {
     }
   })
   if (items.length > 0) sections.push(['Items:', ...items].join('\n'))
+  const named = Object.entries(plan.repoNames)
+  if (named.length > 0) sections.push(`Repo names: ${named.map(([repo, name]) => `${repo} = ${name}`).join(', ')}`)
 
   if (cards.length > 0) {
     const lines = cards.map(card => {

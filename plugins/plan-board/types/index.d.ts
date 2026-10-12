@@ -15,7 +15,7 @@ export type ItemChange =
   | { kind: 'item.edit'; data: { item: string; title?: string; goal?: string } }
   | { kind: 'item.reorder'; data: { order: string[] } }
 export type StepChange =
-  | { kind: 'step.add'; data: { item: string; step: StepSpec; after?: string; status?: StepStatus; to?: string; note?: string; result?: string } }
+  | { kind: 'step.add'; data: { item: string; step: StepSpec; after?: string; status?: StepStatus; to?: string; note?: string; result?: string; repo?: string } }
   | { kind: 'step.edit'; data: { step: string; title: string } }
   | { kind: 'step.remove'; data: { step: string } }
   | { kind: 'step.move'; data: { step: string; item: string; after?: string } }
@@ -23,8 +23,12 @@ export type StepChange =
   | { kind: 'step.status'; data: { step: string; status: StepStatus; result?: string } }
   /** Where a step stands now; an empty note clears it. Never shown in the change history. */
   | { kind: 'step.note'; data: { step: string; note: string } }
+  /** Which repo a step is done in, by folder name; an empty repo untags it. */
+  | { kind: 'step.repo'; data: { step: string; repo: string } }
 /** Links a document (a path from the repo root) to an item. Not an item-level change: it needs no approval. */
 export type LinkChange = { kind: 'item.link'; data: { item: string; doc: string } }
+/** The short name a repo folder is shown under; an empty name drops it. Not an item-level change, and on no item's history. */
+export type RepoChange = { kind: 'repo.name'; data: { repo: string; name: string } }
 export type CardOption = { label: string; effect: string; recommended?: boolean; reason?: string }
 export type CardSpec = {
   id: string; type: 'question' | 'proposal' | 'action'; item?: string; step?: string
@@ -36,11 +40,11 @@ export type CardChange =
   | { kind: 'card.open'; data: { card: CardSpec } }
   | { kind: 'card.resolve'; data: { card: string; outcome: string; choice?: string } }
 export type EditChange = { kind: 'edit.keep' | 'edit.drop'; data: { lines: string[]; summary: string } }
-export type Change = ItemChange | LinkChange | StepChange | CardChange | EditChange
+export type Change = ItemChange | LinkChange | StepChange | RepoChange | CardChange | EditChange
 export type Entry = Change & { id: string; at: string; why: string; basis: Basis }
 
 export type Item = { id: string; title: string; goal: string; steps: string[]; docs: string[] }
-export type Step = { id: string; item: string; title: string; status: StepStatus; assignee?: string; note?: string; evidence?: { thoth?: string; result?: string } }
+export type Step = { id: string; item: string; title: string; status: StepStatus; assignee?: string; note?: string; repo?: string; evidence?: { thoth?: string; result?: string } }
 export type Card = CardSpec & { openedAt: string; resolved?: { outcome: string; choice?: string; at: string } }
 export type Flagged = { raw: string; hash: string; entry: Entry | null }
 /** Where the log was read from: the repo's plan/log.jsonl, or the text this machine keeps in $.store. */
@@ -59,6 +63,8 @@ export type Plan = {
   names: Record<string, string>
   /** The title an item.edit (with a new title) or a step.edit replaced, by the id of that entry. */
   previousNames: Record<string, string>
+  /** Short names by repo folder name, from repo.name entries. */
+  repoNames: Record<string, string>
   flagged: Flagged[]
   skipped: { entry: Entry; reason: string }[]
 }

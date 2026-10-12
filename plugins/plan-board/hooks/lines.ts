@@ -1,5 +1,6 @@
 import { t } from './i18n.ts'
 import type { Key, Lang } from './i18n.ts'
+import { repoLabel } from './view.ts'
 import type { Change, Entry, Plan } from '../types'
 
 /** Cells a character takes on a terminal: two for wide East Asian characters. */
@@ -116,6 +117,15 @@ export function changeLine(change: Change, plan: Plan, lang: Lang, previous?: st
     }
     case 'step.note':
       return `${t(lang, 'kindStep')} ${t(lang, 'stepNote', { step: name(change.data.step), note: change.data.note })}`
+    case 'step.repo':
+      return change.data.repo === ''
+        ? `${t(lang, 'kindStep')} ${t(lang, 'stepUntag', { step: name(change.data.step) })}`
+        : `${t(lang, 'kindStep')} ${t(lang, 'stepTag', { step: name(change.data.step), repo: repoLabel(plan, change.data.repo) })}`
+    case 'repo.name':
+      // On no item's history, but every kind has a sentence.
+      return change.data.name === ''
+        ? `${t(lang, 'kindRepo')} ${t(lang, 'repoUnname', { repo: change.data.repo })}`
+        : `${t(lang, 'kindRepo')} ${t(lang, 'repoName', { repo: change.data.repo, name: change.data.name })}`
     case 'card.open':
       return `${t(lang, 'kindCard')} ${t(lang, change.data.card.type === 'action' ? 'actionOpen' : 'cardOpen', { question: change.data.card.question })}`
     case 'card.resolve':

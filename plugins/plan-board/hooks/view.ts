@@ -56,6 +56,11 @@ export function cardPosition(plan: Plan, card: Card): { item?: Item; index?: num
   return position
 }
 
+/** What a repo is shown as: its short name, else its folder name. */
+export function repoLabel(plan: Plan, repo: string): string {
+  return Object.hasOwn(plan.repoNames, repo) ? plan.repoNames[repo] : repo
+}
+
 export function historyOf(plan: Plan, itemId: string): Entry[] {
   return [...(plan.itemLog[itemId] ?? [])].reverse()
 }

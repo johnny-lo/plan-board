@@ -525,3 +525,100 @@ test('add_user_action_opens_an_action_card', async () => {
   expect(bad(TOOLS.apply_change.run(ctxOf(withCard, ['a1']), { card: 'a1' }))).toContain('not a proposal')
   good(TOOLS.resolve_decision.run(ctxOf(withCard), { card: 'a1', outcome: 'logged in' }))
 })
+
+test('repo_op_and_add_repo_tag_steps', async () => {
+  const base = [entry('item.add', { item: item('A') }), step('A', 's1')]
+  const plan = await planOf(base)
+  const run = (ops: object[]) => TOOLS.update_step.run(ctxOf(plan), { why: 'work moved to the auth repo', ops })
+
+  const tagged = good(run([{ action: 'repo', step: 's1', repo: ' auth-center ' }]))
+  expect(tagged.entries.map((e) => [e.kind, e.data, e.basis])).toEqual([['step.repo', { step: 's1', repo: 'auth-center' }, { type: 'ai' }]])
+  expect(tagged.message).toContain('s1')
+  expect(good(run([{ action: 'repo', step: 's1', repo: '   ' }])).entries[0].data).toEqual({ step: 's1', repo: '' })
+
+  const added = good(run([{ action: 'add', item: 'A', title: 'check tokens', status: 'doing', repo: ' auth-center ' }]))
+  expect(added.entries.length).toBe(1)
+  const id = (added.entries[0].data as { step: { id: string } }).step.id
+  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'check tokens' }, status: 'doing', repo: 'auth-center' })
+  expect(added.message).toContain('(doing, repo auth-center)')
+  const after = await replay(await nextText(await logText(base), added.entries, []))
+  expect(after.steps[id].repo).toBe('auth-center')
+
+  // An empty or blank repo on add is the same as none.
+  for (const repo of ['', '   ']) {
+    expect(good(run([{ action: 'add', item: 'A', title: 'x', repo }])).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'x' } })
+  }
+  expect(bad(run([{ action: 'repo', step: 's1' }]))).toContain('repo')
+  expect(bad(run([{ action: 'repo', step: 'ghost', repo: 'x' }]))).toContain('unknown step')
+  expect(bad(run([{ action: 'add', item: 'A', title: 'x', repo: 3 }]))).toContain('repo')
+  // A tag is no note: why is still needed.
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { ops: [{ action: 'repo', step: 's1', repo: 'x' }] }))).toContain('why')
+  expect(bad(run([{ action: 'tag' }]))).toContain('add, edit, remove, move, assign, status, note, repo, repo_name, link')
+  const schema = JSON.stringify(TOOLS.update_step.inputSchema)
+  expect(schema).toContain('"repo"')
+  expect(schema).toContain('"repo_name"')
+  expect(schema).toContain('"name"')
+})
+
+test('repo_name_refuses_a_name_another_repo_has', async () => {
+  const plan = await planOf([
+    entry('item.add', { item: item('A') }),
+    step('A', 's1'),
+    entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' }),
+  ])
+  const run = (ops: object[]) => TOOLS.update_step.run(ctxOf(plan), { why: 'names the user knows', ops })
+
+  const named = good(run([{ action: 'repo_name', repo: ' auth-center ', name: ' 認證中心 ' }]))
+  expect(named.entries.map((e) => [e.kind, e.data, e.basis])).toEqual([['repo.name', { repo: 'auth-center', name: '認證中心' }, { type: 'ai' }]])
+  expect(named.message).toContain('auth-center')
+
+  // The name a repo already has, given to it again, is no clash.
+  good(run([{ action: 'repo_name', repo: 'post_backend_eruncard', name: 'ERC後端' }]))
+  expect(bad(run([{ action: 'repo_name', repo: 'auth-center', name: 'ERC後端' }]))).toBe('short name ERC後端 is already used by post_backend_eruncard')
+  // Two repos given one name in a single call clash too.
+  expect(
+    bad(
+      run([
+        { action: 'repo_name', repo: 'auth-center', name: '後端' },
+        { action: 'repo_name', repo: 'thoth', name: '後端' },
+      ]),
+    ),
+  ).toBe('short name 後端 is already used by auth-center')
+  // A name dropped earlier in the call can be given to another repo.
+  good(
+    run([
+      { action: 'repo_name', repo: 'post_backend_eruncard', name: '' },
+      { action: 'repo_name', repo: 'auth-center', name: 'ERC後端' },
+    ]),
+  )
+  // A short name needs no step, so it goes before or after the tags of the same call.
+  const after = good(
+    run([
+      { action: 'repo', step: 's1', repo: 'auth-center' },
+      { action: 'repo_name', repo: 'auth-center', name: '認證中心' },
+    ]),
+  )
+  expect(after.entries.map((e) => e.kind)).toEqual(['step.repo', 'repo.name'])
+  const before = good(
+    run([
+      { action: 'repo_name', repo: 'thoth', name: 'Thoth' },
+      { action: 'add', item: 'A', title: 'dispatch', repo: 'thoth' },
+    ]),
+  )
+  expect(before.entries.map((e) => e.kind)).toEqual(['repo.name', 'step.add'])
+  expect(good(run([{ action: 'repo_name', repo: 'post_backend_eruncard', name: '  ' }])).entries[0].data).toEqual({ repo: 'post_backend_eruncard', name: '' })
+
+  expect(bad(run([{ action: 'repo_name', repo: '  ', name: 'x' }]))).toContain('repo')
+  expect(bad(run([{ action: 'repo_name', repo: 'auth-center' }]))).toContain('name')
+})
+
+test('keeping_flagged_repo_lines_needs_no_card', async () => {
+  const line = (id: string, kind: string, data: object) => JSON.stringify({ id, at: '2026-10-07T00:00:00.500Z', kind, why: 'x', basis: { type: 'ai' }, data })
+  const tail = [
+    line('abcabcabc001', 'step.repo', { step: 's1', repo: 'auth-center' }),
+    line('abcabcabc002', 'repo.name', { repo: 'auth-center', name: '認證中心' }),
+  ].join('\n')
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')], tail + '\n')
+  expect(plan.flagged.length).toBe(2)
+  good(TOOLS.resolve_direct_edit.run(ctxOf(plan), { action: 'keep', summary: 'a repo tag and a short name' }))
+})

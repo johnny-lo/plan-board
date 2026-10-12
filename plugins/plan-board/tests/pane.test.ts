@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { hasKey, keysOf, t } from '../hooks/i18n.ts'
-import { foldText, historyLines, stamp } from '../hooks/lines.ts'
+import { changeLine, foldText, historyLines, stamp } from '../hooks/lines.ts'
 import { replay } from '../hooks/replay.ts'
 import { entry, logText } from './fixtures.ts'
 import { world } from './world.ts'
@@ -74,6 +74,9 @@ const addAction = async ($: Engine, extra: Record<string, unknown> = {}) => {
   const added = await $.tool.call({ tool: tool('add_user_action'), action: ACTION, why: '新的檢查要人核准才會跑', command: 'thoth checks approve', ...extra })
   return /card (\w{8})/.exec(String(added.result))?.[1] as string
 }
+/** Repo folder names, as the AI tags steps with them; neither has 8 hex characters in a row, so ID does not take them for ids. */
+const ERC = 'post_backend_eruncard'
+const AUTH = 'auth-center'
 
 async function start($: Engine, on: Parameters<typeof world>[0], entries: ReturnType<typeof entry>[] | null, extra = ''): Promise<World> {
   const w = world(on, entries === null ? {} : { [LOG]: (await logText(entries)) + extra })
@@ -765,6 +768,7 @@ test('i18n_tables_have_the_same_keys', () => {
     '計畫被直接改過，等 AI 檢查', '· ⚠ 計畫被直接改過', '計畫：{doing} 項進行中 · {waiting} 件事等你', '打開',
     '做好了', '為什麼：{why}', '指令：{command}', '已送出，等 AI 確認', '等你處理：{question}', '請你「{question}」',
     '步驟：{counts}', '新增 {n} 個', '做完 {n} 個', '開始 {n} 個', '改回還沒開始 {n} 個', '改名 {n} 個', '刪掉 {n} 個', '移動 {n} 個', '改派 {n} 個', '連上文件 {n} 個',
+    '「{step}」標成 {repo}', '「{step}」不標 repo', 'repo', '{repo} 顯示成「{name}」', '{repo} 改回顯示資料夾名',
   ]
   const values = new Set(zh.map(key => t('zh-TW', key as never)))
   // t fills slots it has values for; unfilled ones stay as written.
@@ -906,6 +910,33 @@ test('action_card_history_line', async () => {
   )
   expect(historyLines(plan.applied[0], plan, 'zh-TW')[0]).toContain(`卡片 請你「${ACTION}」`)
   expect(historyLines(plan.applied[0], plan, 'en')[0]).toContain(`Card asked you to "${ACTION}"`)
+})
+
+test('step_repo_and_repo_name_lines_in_both_languages', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item(A, '看板', 'g') }),
+      entry('step.add', { item: A, step: { id: S1, title: '審查' } }),
+      entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+      entry('step.repo', { step: S1, repo: ERC }),
+      entry('step.repo', { step: S1, repo: AUTH }),
+      entry('step.repo', { step: S1, repo: '' }),
+      entry('repo.name', { repo: AUTH, name: '' }),
+    ]),
+  )
+  const [named, tagged, other, untagged, unnamed] = plan.applied.slice(2)
+  // A tag names the repo by its short name now; one without a short name by its folder.
+  expect(changeLine(tagged, plan, 'zh-TW')).toBe('步驟 「審查」標成 ERC後端')
+  expect(changeLine(tagged, plan, 'en')).toBe('Step tagged "審查" with ERC後端')
+  expect(changeLine(other, plan, 'zh-TW')).toBe('步驟 「審查」標成 auth-center')
+  expect(changeLine(untagged, plan, 'zh-TW')).toBe('步驟 「審查」不標 repo')
+  expect(changeLine(untagged, plan, 'en')).toBe('Step untagged "審查"')
+  // A short name is on no item's history, but every kind has a sentence.
+  expect(changeLine(named, plan, 'zh-TW')).toBe(`repo ${ERC} 顯示成「ERC後端」`)
+  expect(changeLine(named, plan, 'en')).toBe(`Repo ${ERC} is shown as "ERC後端"`)
+  expect(changeLine(unnamed, plan, 'zh-TW')).toBe('repo auth-center 改回顯示資料夾名')
+  expect(changeLine(unnamed, plan, 'en')).toBe('Repo auth-center is shown by its folder name')
+  for (const e of plan.applied.slice(2)) expect(historyLines(e, plan, 'zh-TW')[0]).not.toMatch(ID)
 })
 
 test('fold_text_counts_each_kind_in_both_languages', async () => {
