@@ -2518,3 +2518,1454 @@ git commit -m "docs(plan-board): guide, README and 0.2.0 for notes, action cards
 ```
 
 實際做法（2026-10-11）：Task 12–17 合成一個 Thoth 任務 `01M4NTC7MCV0GT8T4RC9QTTFXV`，claude-a／sonnet／high，1 輪約 7 分鐘、6 個 commit（每個 Task 一個，訊息照計畫）。審查（opus，比實作高一階）9 條 AC 全部 met、沒有其他缺陷；Thoth 重跑四條核准檢查全過。合併後 133 個外掛測試、2 個 git 合併測試（Node 24）全過。這台 Linux 是第一次 `thoth init`：四條檢查重新加過、由使用者核准；git 合併測試用 `~/.local/node24/bin/node`，因為 Ubuntu 的 Node 22 不支援直接跑 TypeScript。
+
+---
+
+## 跨 repo 與想法結案（spec 16，2026-10-12 加）
+
+**Goal:** 照 spec 16 改 plan-board：步驟標在哪個 repo 做、repo 有短名、項目列看得出各 repo 做到哪；只送想法的卡跟選了選項一樣變淡，由 AI 當下結案。
+
+**Architecture:** 跟前面一樣：規則放在純模組（replay、tools、view、lines、local、guide、i18n），各自有單元測試；`pane.tsx` 畫面、`register.tsx` 接線（這一段不用改 `register.tsx`）。新的紀錄種類兩個：`step.repo`（步驟瑣事，進項目的變動紀錄）和 `repo.name`（不指到任何項目或步驟，不進任何項目的變動紀錄）；`step.add` 多一個可選欄位 `repo`；計畫多一張從紀錄算出來的 `repoNames`。紀錄裡一律存資料夾名，畫面一律經過 `repoLabel` 換成現在的短名。想法結案只改「什麼算已回答」（`isAnswered`）和送給 AI 的字，送出的時機不變。舊的紀錄一行都不改；舊版外掛讀到新紀錄會略過、`step.add` 多出來的 `repo` 會被忽略（spec 16.5），這部分不用寫程式。
+
+**Spec:** `docs/superpowers/specs/2026-10-07-plan-board-design.md` 第 16 節（決定的來由在 16 節開頭「使用者選的」）。
+
+**順序：** Task 18 → 21 依序做。Task 19 用到 Task 18 的型別、`repoLabel` 和測試常數；Task 20 不依賴 Task 18、19 的程式，但下面寫的 pass 數是照這個順序算的。每個 Task 結束時全部測試都要過。這一段的程式碼和測試在 2026-10-12 照本文逐字套在外掛的副本上跑過：各 Task Step 2、Step 4 的數字都是實測，`claude plugin validate --strict` 和 `tests-git/merge.test.ts` 也過。
+
+### 追加的 Global Constraints
+
+前面兩段 Global Constraints 全部照舊，另外：
+
+- 外掛版本 `0.3.0`（Task 21）。
+- 開始前的基準：`claude plugin test plugins/plan-board` 是 `134 pass`、`0 fail`（2026-10-12 實測）。
+- 畫面上的新文字照下面各 Task 寫的字一字不差（中英兩份對照表的鍵和 `{slot}` 要一樣，`i18n_tables_have_the_same_keys` 會檢查）。
+- 給 AI 的文字（工具結果、錯誤、送給 AI 的訊息、說明、摘要）一律英文；使用者看得懂的短名照原文放進去（例如 `ERC後端`）。
+- 紀錄和計畫裡的 repo 一律是資料夾名；畫面上一律經過 `repoLabel`（Task 18）顯示**現在的**短名，沒有短名才顯示資料夾名。不要把短名寫進 `step.repo` 或 `step.add`。
+- 測試用的 repo 名稱不能含連續 8 個十六進位字元：`pane.test.ts` 的 `ID`（`/[0-9a-f]{8}/`）會把它當成 id。
+
+### 追加的 Review Focus
+
+1. **同一個 repo 再設一次它現在的短名**（例如 AI 照摘要重送一次 `repo_name`）→ 照常寫入，不算同名；只有名字已經是**別的**資料夾的短名才拒絕，同一次呼叫裡先拿掉再給別的 repo 也可以。測試在 Task 18（`repo_name_refuses_a_name_another_repo_has`）和 Task 19（`a_new_or_dropped_short_name_shows_everywhere_at_once`，走真的工具呼叫）。
+2. **標了 repo 的步驟用 `move` 移到別的項目** → 兩個項目列的 repo 進度都跟著變：原項目少算一個，新項目照它在新項目裡第一次出現的位置排。測試在 Task 19（`repo_progress_follows_a_step_moved_to_another_item`）。
+3. **改短名或拿掉短名之後** → 項目列、步驟那一行、變動紀錄（包括改名之前寫的紀錄）立刻換成新名字或退回資料夾名，畫面上不留舊名。測試在 Task 19（`a_new_or_dropped_short_name_shows_everywhere_at_once`、`history_names_a_repo_by_its_current_short_name`）。
+4. **`blocking` 的決定卡只送想法** → 立刻送出、立刻變淡、不算等你；步驟和項目列的 ⚑ 留到 AI 結案才消失。測試在 Task 20（`a_blocking_thought_dims_the_card_at_once_and_the_step_keeps_its_flag`）。
+5. **選了選項又寫了想法、一起送出** → 跟 0.2 一樣：送給 AI 的是選項加 `thought:`，沒有「Settle this card now」；卡片變淡，但不多一行「你的想法」；摘要寫 `(sent, waiting for you to resolve)`。測試在 Task 20（`a_choice_sent_with_a_thought_dims_as_before`、`a_thought_only_card_is_answered_and_the_ai_is_told_to_settle_it`、`blocking_message_text`）。
+
+---
+
+### Task 18: 步驟標 repo、短名的資料與工具（spec 16.1、16.2）
+
+**Files:**
+- Modify: `plugins/plan-board/types/index.d.ts`
+- Modify: `plugins/plan-board/hooks/replay.ts`（`emptyPlan`、`hasValidData`、`applyEntry`）
+- Modify: `plugins/plan-board/hooks/tools.ts`（`clonePlan`、`updateStep`、`TOOLS.update_step`）
+- Modify: `plugins/plan-board/hooks/view.ts`（新的 `repoLabel`）
+- Modify: `plugins/plan-board/hooks/lines.ts`（`changeLine`）
+- Modify: `plugins/plan-board/hooks/i18n.ts`
+- Modify: `plugins/plan-board/hooks/guide.ts`（`summary`）
+- Test: `plugins/plan-board/tests/replay.test.ts`、`tests/tools.test.ts`、`tests/view.test.ts`、`tests/pane.test.ts`
+
+**Interfaces:**
+- Produces: `Step.repo?: string`；`Plan.repoNames: Record<string, string>`（沒有 prototype，跟 `names` 一樣）；紀錄種類 `{ kind: 'step.repo'; data: { step: string; repo: string } }` 和型別 `RepoChange = { kind: 'repo.name'; data: { repo: string; name: string } }`；`step.add` 的 `data.repo?: string`；`update_step` 的 op `{ action: 'repo', step, repo }`、`{ action: 'repo_name', repo, name }`，`add` op 多一個 `repo`；`repoLabel(plan: Plan, repo: string): string`（`view.ts`）；i18n 鍵 `stepTag`、`stepUntag`、`kindRepo`、`repoName`、`repoUnname`；`tests/pane.test.ts` 的常數 `ERC`、`AUTH`。
+- Consumes: 無。
+
+- [ ] **Step 1: 寫會失敗的測試**
+
+`tests/replay.test.ts` 最後加：
+
+```ts
+test('step_repo_tags_untags_and_skips_an_unknown_step', async () => {
+  const entries = [
+    entry('item.add', { item: item('A') }),
+    entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, repo: 'auth-center' }),
+    entry('step.add', { item: 'A', step: { id: 's2', title: 'two' }, repo: '' }),
+    entry('step.add', { item: 'A', step: { id: 's3', title: 'three' } }),
+    entry('step.repo', { step: 's3', repo: 'post_backend_eruncard' }),
+    entry('step.repo', { step: 'ghost', repo: 'auth-center' }),
+  ]
+  const plan = await replay(await logText(entries))
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'todo', repo: 'auth-center' })
+  expect(Object.hasOwn(plan.steps.s2, 'repo')).toBe(false)
+  expect(plan.steps.s3.repo).toBe('post_backend_eruncard')
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['unknown step: ghost'])
+  // A tag is a step change: it is on the item's history.
+  expect(plan.itemLog.A.filter((e) => e.kind === 'step.repo')).toHaveLength(1)
+
+  const later = await replay(
+    await logText([...entries, entry('step.repo', { step: 's1', repo: '' }), entry('step.repo', { step: 's3', repo: 7 })]),
+  )
+  expect(Object.hasOwn(later.steps.s1, 'repo')).toBe(false)
+  expect(later.steps.s3.repo).toBe('post_backend_eruncard')
+  expect(later.skipped.map((s) => s.reason)).toEqual(['unknown step: ghost', 'malformed entry: bad data for step.repo'])
+})
+
+test('repo_names_are_set_and_dropped_and_stay_off_item_histories', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' }),
+      entry('repo.name', { repo: 'auth-center', name: '認證中心' }),
+      entry('repo.name', { repo: 'auth-center', name: '' }),
+      entry('repo.name', { repo: '  ', name: 'blank' }),
+    ]),
+  )
+  expect(plan.repoNames).toEqual({ post_backend_eruncard: 'ERC後端' })
+  expect(Object.getPrototypeOf(plan.repoNames)).toBeNull()
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['malformed entry: bad data for repo.name'])
+  expect(plan.applied.filter((e) => e.kind === 'repo.name')).toHaveLength(3)
+  // A short name points at no item or step, so no item's history shows it.
+  expect(plan.itemLog.A.some((e) => e.kind === 'repo.name')).toBe(false)
+})
+
+test('logs_without_repos_replay_the_same', async () => {
+  // Lines written before 0.3.0: no step.repo, no repo.name, no repo on step.add.
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, status: 'doing', to: 'claude-b' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+      entry('step.status', { step: 's2', status: 'done', result: 'ok' }),
+    ]),
+  )
+  expect(plan.skipped).toEqual([])
+  expect(plan.repoNames).toEqual({})
+  expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'doing', assignee: 'claude-b' })
+  expect(plan.steps.s2).toEqual({ id: 's2', item: 'A', title: 'two', status: 'done', evidence: { result: 'ok' } })
+  expect(Object.values(plan.steps).some((s) => Object.hasOwn(s, 'repo'))).toBe(false)
+})
+```
+
+`tests/tools.test.ts` 最後加：
+
+```ts
+test('repo_op_and_add_repo_tag_steps', async () => {
+  const base = [entry('item.add', { item: item('A') }), step('A', 's1')]
+  const plan = await planOf(base)
+  const run = (ops: object[]) => TOOLS.update_step.run(ctxOf(plan), { why: 'work moved to the auth repo', ops })
+
+  const tagged = good(run([{ action: 'repo', step: 's1', repo: ' auth-center ' }]))
+  expect(tagged.entries.map((e) => [e.kind, e.data, e.basis])).toEqual([['step.repo', { step: 's1', repo: 'auth-center' }, { type: 'ai' }]])
+  expect(tagged.message).toContain('s1')
+  expect(good(run([{ action: 'repo', step: 's1', repo: '   ' }])).entries[0].data).toEqual({ step: 's1', repo: '' })
+
+  const added = good(run([{ action: 'add', item: 'A', title: 'check tokens', status: 'doing', repo: ' auth-center ' }]))
+  expect(added.entries.length).toBe(1)
+  const id = (added.entries[0].data as { step: { id: string } }).step.id
+  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'check tokens' }, status: 'doing', repo: 'auth-center' })
+  expect(added.message).toContain('(doing, repo auth-center)')
+  const after = await replay(await nextText(await logText(base), added.entries, []))
+  expect(after.steps[id].repo).toBe('auth-center')
+
+  // An empty or blank repo on add is the same as none.
+  for (const repo of ['', '   ']) {
+    expect(good(run([{ action: 'add', item: 'A', title: 'x', repo }])).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'x' } })
+  }
+  expect(bad(run([{ action: 'repo', step: 's1' }]))).toContain('repo')
+  expect(bad(run([{ action: 'repo', step: 'ghost', repo: 'x' }]))).toContain('unknown step')
+  expect(bad(run([{ action: 'add', item: 'A', title: 'x', repo: 3 }]))).toContain('repo')
+  // A tag is no note: why is still needed.
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { ops: [{ action: 'repo', step: 's1', repo: 'x' }] }))).toContain('why')
+  expect(bad(run([{ action: 'tag' }]))).toContain('add, edit, remove, move, assign, status, note, repo, repo_name, link')
+  const schema = JSON.stringify(TOOLS.update_step.inputSchema)
+  expect(schema).toContain('"repo"')
+  expect(schema).toContain('"repo_name"')
+  expect(schema).toContain('"name"')
+})
+
+test('repo_name_refuses_a_name_another_repo_has', async () => {
+  const plan = await planOf([
+    entry('item.add', { item: item('A') }),
+    step('A', 's1'),
+    entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' }),
+  ])
+  const run = (ops: object[]) => TOOLS.update_step.run(ctxOf(plan), { why: 'names the user knows', ops })
+
+  const named = good(run([{ action: 'repo_name', repo: ' auth-center ', name: ' 認證中心 ' }]))
+  expect(named.entries.map((e) => [e.kind, e.data, e.basis])).toEqual([['repo.name', { repo: 'auth-center', name: '認證中心' }, { type: 'ai' }]])
+  expect(named.message).toContain('auth-center')
+
+  // The name a repo already has, given to it again, is no clash.
+  good(run([{ action: 'repo_name', repo: 'post_backend_eruncard', name: 'ERC後端' }]))
+  expect(bad(run([{ action: 'repo_name', repo: 'auth-center', name: 'ERC後端' }]))).toBe('short name ERC後端 is already used by post_backend_eruncard')
+  // Two repos given one name in a single call clash too.
+  expect(
+    bad(
+      run([
+        { action: 'repo_name', repo: 'auth-center', name: '後端' },
+        { action: 'repo_name', repo: 'thoth', name: '後端' },
+      ]),
+    ),
+  ).toBe('short name 後端 is already used by auth-center')
+  // A name dropped earlier in the call can be given to another repo.
+  good(
+    run([
+      { action: 'repo_name', repo: 'post_backend_eruncard', name: '' },
+      { action: 'repo_name', repo: 'auth-center', name: 'ERC後端' },
+    ]),
+  )
+  // A short name needs no step, so it goes before or after the tags of the same call.
+  const after = good(
+    run([
+      { action: 'repo', step: 's1', repo: 'auth-center' },
+      { action: 'repo_name', repo: 'auth-center', name: '認證中心' },
+    ]),
+  )
+  expect(after.entries.map((e) => e.kind)).toEqual(['step.repo', 'repo.name'])
+  const before = good(
+    run([
+      { action: 'repo_name', repo: 'thoth', name: 'Thoth' },
+      { action: 'add', item: 'A', title: 'dispatch', repo: 'thoth' },
+    ]),
+  )
+  expect(before.entries.map((e) => e.kind)).toEqual(['repo.name', 'step.add'])
+  expect(good(run([{ action: 'repo_name', repo: 'post_backend_eruncard', name: '  ' }])).entries[0].data).toEqual({ repo: 'post_backend_eruncard', name: '' })
+
+  expect(bad(run([{ action: 'repo_name', repo: '  ', name: 'x' }]))).toContain('repo')
+  expect(bad(run([{ action: 'repo_name', repo: 'auth-center' }]))).toContain('name')
+})
+
+test('keeping_flagged_repo_lines_needs_no_card', async () => {
+  const line = (id: string, kind: string, data: object) => JSON.stringify({ id, at: '2026-10-07T00:00:00.500Z', kind, why: 'x', basis: { type: 'ai' }, data })
+  const tail = [
+    line('abcabcabc001', 'step.repo', { step: 's1', repo: 'auth-center' }),
+    line('abcabcabc002', 'repo.name', { repo: 'auth-center', name: '認證中心' }),
+  ].join('\n')
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')], tail + '\n')
+  expect(plan.flagged.length).toBe(2)
+  good(TOOLS.resolve_direct_edit.run(ctxOf(plan), { action: 'keep', summary: 'a repo tag and a short name' }))
+})
+```
+
+`tests/view.test.ts`：最上面的 import 換成：
+
+```ts
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor, repoLabel } from '../hooks/view.ts'
+```
+
+最後加：
+
+```ts
+test('summary_shows_repos_and_their_short_names', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 's1' }, repo: 'post_backend_eruncard' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 's2' }, repo: 'auth-center' }),
+      step('A', 's3'),
+      entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' }),
+      entry('repo.name', { repo: 'thoth', name: 'Thoth' }),
+    ]),
+  )
+  const out = summary(plan, emptyLocal)
+  expect(out).toContain('- [s1] s1 — todo, repo: post_backend_eruncard (ERC後端)\n')
+  expect(out).toContain('- [s2] s2 — todo, repo: auth-center\n')
+  expect(out).toContain('- [s3] s3 — todo\n')
+  expect(out).toContain('Repo names: post_backend_eruncard = ERC後端, thoth = Thoth')
+  const bare = await replay(await logText([entry('item.add', { item: item('A') }), step('A', 's1')]))
+  expect(summary(bare, emptyLocal)).not.toContain('Repo names')
+})
+
+test('repo_label_is_the_short_name_else_the_folder', async () => {
+  const plan = await replay(await logText([entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' })]))
+  expect(repoLabel(plan, 'post_backend_eruncard')).toBe('ERC後端')
+  expect(repoLabel(plan, 'auth-center')).toBe('auth-center')
+  expect(repoLabel(plan, 'toString')).toBe('toString')
+})
+```
+
+`tests/pane.test.ts`：
+
+`import { foldText, historyLines, stamp } from '../hooks/lines.ts'` 換成：
+
+```ts
+import { changeLine, foldText, historyLines, stamp } from '../hooks/lines.ts'
+```
+
+在 `addAction` 那段後面加（Task 19 也會用到）：
+
+```ts
+/** Repo folder names, as the AI tags steps with them; neither has 8 hex characters in a row, so ID does not take them for ids. */
+const ERC = 'post_backend_eruncard'
+const AUTH = 'auth-center'
+```
+
+在 `action_card_history_line` 後面加：
+
+```ts
+test('step_repo_and_repo_name_lines_in_both_languages', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item(A, '看板', 'g') }),
+      entry('step.add', { item: A, step: { id: S1, title: '審查' } }),
+      entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+      entry('step.repo', { step: S1, repo: ERC }),
+      entry('step.repo', { step: S1, repo: AUTH }),
+      entry('step.repo', { step: S1, repo: '' }),
+      entry('repo.name', { repo: AUTH, name: '' }),
+    ]),
+  )
+  const [named, tagged, other, untagged, unnamed] = plan.applied.slice(2)
+  // A tag names the repo by its short name now; one without a short name by its folder.
+  expect(changeLine(tagged, plan, 'zh-TW')).toBe('步驟 「審查」標成 ERC後端')
+  expect(changeLine(tagged, plan, 'en')).toBe('Step tagged "審查" with ERC後端')
+  expect(changeLine(other, plan, 'zh-TW')).toBe('步驟 「審查」標成 auth-center')
+  expect(changeLine(untagged, plan, 'zh-TW')).toBe('步驟 「審查」不標 repo')
+  expect(changeLine(untagged, plan, 'en')).toBe('Step untagged "審查"')
+  // A short name is on no item's history, but every kind has a sentence.
+  expect(changeLine(named, plan, 'zh-TW')).toBe(`repo ${ERC} 顯示成「ERC後端」`)
+  expect(changeLine(named, plan, 'en')).toBe(`Repo ${ERC} is shown as "ERC後端"`)
+  expect(changeLine(unnamed, plan, 'zh-TW')).toBe('repo auth-center 改回顯示資料夾名')
+  expect(changeLine(unnamed, plan, 'en')).toBe('Repo auth-center is shown by its folder name')
+  for (const e of plan.applied.slice(2)) expect(historyLines(e, plan, 'zh-TW')[0]).not.toMatch(ID)
+})
+```
+
+`i18n_tables_have_the_same_keys` 的 `words`，最後一行（`'步驟：{counts}', …`）後面加一行：
+
+```ts
+    '「{step}」標成 {repo}', '「{step}」不標 repo', 'repo', '{repo} 顯示成「{name}」', '{repo} 改回顯示資料夾名',
+```
+
+- [ ] **Step 2: 跑測試，確認新的測試失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: `116 pass`、`8 fail`。`tests/view.test.ts` 整個檔案載入失敗（`(fail) the file did not load`：它 import 的 `repoLabel` 還不存在，所以這個檔案裡的測試都沒跑）；另外 7 個 FAIL：`step_repo_tags_untags_and_skips_an_unknown_step`、`repo_names_are_set_and_dropped_and_stay_off_item_histories`、`logs_without_repos_replay_the_same`、`repo_op_and_add_repo_tag_steps`、`repo_name_refuses_a_name_another_repo_has`、`step_repo_and_repo_name_lines_in_both_languages`、`i18n_tables_have_the_same_keys`。`keeping_flagged_repo_lines_needs_no_card` 已經會過：現在的 `keep` 只對 `item.*` 要卡片，這個測試守住 spec 16.1、16.2 的「不用開卡」。
+
+- [ ] **Step 3: 實作**
+
+`types/index.d.ts`：
+
+`StepChange` 的 `step.add` 換成（多 `repo?`）：
+
+```ts
+  | { kind: 'step.add'; data: { item: string; step: StepSpec; after?: string; status?: StepStatus; to?: string; note?: string; result?: string; repo?: string } }
+```
+
+`step.note` 那一種後面加：
+
+```ts
+  /** Which repo a step is done in, by folder name; an empty repo untags it. */
+  | { kind: 'step.repo'; data: { step: string; repo: string } }
+```
+
+`LinkChange` 後面加 `RepoChange`，`Change` 換成：
+
+```ts
+/** The short name a repo folder is shown under; an empty name drops it. Not an item-level change, and on no item's history. */
+export type RepoChange = { kind: 'repo.name'; data: { repo: string; name: string } }
+```
+
+```ts
+export type Change = ItemChange | LinkChange | StepChange | RepoChange | CardChange | EditChange
+```
+
+`Step` 換成（多 `repo?`）：
+
+```ts
+export type Step = { id: string; item: string; title: string; status: StepStatus; assignee?: string; note?: string; repo?: string; evidence?: { thoth?: string; result?: string } }
+```
+
+`Plan` 的 `previousNames` 後面加：
+
+```ts
+  /** Short names by repo folder name, from repo.name entries. */
+  repoNames: Record<string, string>
+```
+
+`hooks/replay.ts`：
+
+`emptyPlan` 在 `previousNames: table(),` 後面加 `repoNames: table(),`。
+
+`hasValidData` 的 `case 'step.add'` 換成：
+
+```ts
+    case 'step.add':
+      return (
+        isString(d.item) &&
+        isObject(d.step) &&
+        isString(d.step.id) &&
+        isString(d.step.title) &&
+        isOptString(d.after) &&
+        (d.status === undefined || isStatus(d.status)) &&
+        isOptString(d.to) &&
+        isOptString(d.note) &&
+        isOptString(d.result) &&
+        isOptString(d.repo)
+      )
+```
+
+`hasValidData` 的 `case 'step.note'` 後面加：
+
+```ts
+    case 'step.repo':
+      return isString(d.step) && isString(d.repo)
+    case 'repo.name':
+      return isString(d.repo) && d.repo.trim() !== '' && isString(d.name)
+```
+
+`applyEntry` 的 `case 'step.add'` 換成：
+
+```ts
+    case 'step.add': {
+      const { item, step, after, status, to, note, result, repo } = entry.data
+      if (!has(plan.items, item)) return `unknown item: ${item}`
+      if (has(plan.steps, step.id)) return `step exists: ${step.id}`
+      const added: Step = { id: step.id, item, title: step.title, status: status ?? 'todo' }
+      if (to !== undefined && to !== '') added.assignee = to
+      if (repo !== undefined && repo !== '') added.repo = repo
+      if (added.status === 'done') added.evidence = proofOf(entry, result)
+      else if (note !== undefined && note !== '') added.note = note
+      plan.steps[step.id] = added
+      insertStep(plan, item, step.id, after)
+      plan.names[step.id] = step.title
+      return null
+    }
+```
+
+`applyEntry` 的 `case 'step.note'` 後面加：
+
+```ts
+    case 'step.repo': {
+      const { step, repo } = entry.data
+      if (!has(plan.steps, step)) return `unknown step: ${step}`
+      if (repo === '') delete plan.steps[step].repo
+      else plan.steps[step].repo = repo
+      return null
+    }
+    case 'repo.name': {
+      const { repo, name } = entry.data
+      if (name === '') delete plan.repoNames[repo]
+      else plan.repoNames[repo] = name
+      return null
+    }
+```
+
+`replay()` 不用改：`step.repo` 有 `step`，`touchedBefore` 會把它算進步驟所在的項目；`repo.name` 沒有 `step` 也沒有 `card`，`touchedAfter` 的 `default` 回 `[]`，所以不進任何項目的 `itemLog`。
+
+`hooks/tools.ts`：
+
+`clonePlan` 在 `copy.previousNames = …` 後面加：
+
+```ts
+  copy.repoNames = Object.assign(Object.create(null), copy.repoNames)
+```
+
+`updateStep` 在 `const said: string[] = []` 後面加：
+
+```ts
+  // Short names as this call leaves them, so two ops of one call cannot give two repos the same name.
+  const names: Record<string, string> = Object.assign(Object.create(null), ctx.plan.repoNames)
+```
+
+`switch (raw.action)` 的 `case 'add'` 換成：
+
+```ts
+      case 'add': {
+        const id = ctx.newId(8)
+        const item = field('item')
+        const data: Obj = { item, step: { id, title: field('title') } }
+        if (after !== undefined) data.after = after
+        const status = statusOf(raw, at)
+        const to = optText(raw, 'to')
+        const note = optText(raw, 'note')?.trim()
+        const repo = optText(raw, 'repo')?.trim()
+        if (status === 'done' && note) return fail(`${at}: a step added as done has no note`)
+        const proof: { basis: Basis; result?: string } = status === 'done' ? proofOf(raw, at) : { basis: ai }
+        if (status !== undefined && status !== 'todo') data.status = status
+        if (to) data.to = to
+        if (note) data.note = note
+        if (repo) data.repo = repo
+        if (proof.result !== undefined) data.result = proof.result
+        entries.push(make(ctx, 'step.add', data, why, proof.basis))
+        const how = [status !== undefined && status !== 'todo' ? status : '', to ? `assigned to ${to}` : '', repo ? `repo ${repo}` : ''].filter(
+          (part) => part !== '',
+        )
+        said.push(`Added step ${id} to item ${item}${how.length > 0 ? ` (${how.join(', ')})` : ''}.`)
+        break
+      }
+```
+
+`case 'link'` 前面加：
+
+```ts
+      case 'repo': {
+        if (typeof raw.repo !== 'string') return fail(`${at}.repo must be a string (empty to untag)`)
+        const repo = raw.repo.trim()
+        const stepId = field('step')
+        entries.push(make(ctx, 'step.repo', { step: stepId, repo }, why, ai))
+        said.push(repo === '' ? `Untagged step ${stepId}.` : `Tagged step ${stepId} with repo ${repo}.`)
+        break
+      }
+      case 'repo_name': {
+        const repo = field('repo').trim()
+        if (typeof raw.name !== 'string') return fail(`${at}.name must be a string (empty to drop the short name)`)
+        const name = raw.name.trim()
+        // Two repos under one name could not be told apart; the same name again for the same repo is no clash.
+        const other = name === '' ? undefined : Object.keys(names).find((folder) => folder !== repo && names[folder] === name)
+        if (other !== undefined) return fail(`short name ${name} is already used by ${other}`)
+        if (name === '') delete names[repo]
+        else names[repo] = name
+        entries.push(make(ctx, 'repo.name', { repo, name }, why, ai))
+        said.push(name === '' ? `Dropped the short name of repo ${repo}.` : `Repo ${repo} is shown as ${name}.`)
+        break
+      }
+```
+
+`default` 的錯誤訊息改成 `` `${at}.action must be one of add, edit, remove, move, assign, status, note, repo, repo_name, link` ``。
+
+`TOOLS.update_step` 改三個地方：
+
+1. `description` 換成：
+
+   ```ts
+       description:
+         'Add, edit, remove, move, assign, note, tag with a repo or set the status of steps; give a repo a short name; or link a document (a path from the repo root, such as a superpowers spec or plan) to an item, recording why.',
+   ```
+
+2. `ops.items.properties` 的 `action` 換成：
+
+   ```ts
+                 action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'note', 'repo', 'repo_name', 'link'] },
+   ```
+
+3. `note` 後面加：
+
+   ```ts
+                 repo: {
+                   ...str,
+                   description: "For repo and repo_name, and optionally on add: the repo's folder name, such as auth-center; on repo an empty string untags the step.",
+                 },
+                 name: { ...str, description: 'For repo_name: the short name the user sees for that repo; empty string drops it.' },
+   ```
+
+`resolveDirectEdit` 不用改：`keep` 只對 `item.*`（`item.link` 除外）要卡片，`step.repo`、`repo.name` 本來就不用（spec 16.1、16.2）。
+
+`hooks/view.ts`，`cardPosition` 後面加：
+
+```ts
+/** What a repo is shown as: its short name, else its folder name. */
+export function repoLabel(plan: Plan, repo: string): string {
+  return Object.hasOwn(plan.repoNames, repo) ? plan.repoNames[repo] : repo
+}
+```
+
+`hooks/i18n.ts`：
+
+- `EN` 在 `stepNote` 後面加：
+
+  ```ts
+    stepTag: 'tagged "{step}" with {repo}',
+    stepUntag: 'untagged "{step}"',
+    repoName: '{repo} is shown as "{name}"',
+    repoUnname: '{repo} is shown by its folder name',
+  ```
+
+  在 `kindEdit` 後面加 `kindRepo: 'Repo',`。
+- `ZH_TW` 在 `stepNote` 後面加：
+
+  ```ts
+    stepTag: '「{step}」標成 {repo}',
+    stepUntag: '「{step}」不標 repo',
+    repoName: '{repo} 顯示成「{name}」',
+    repoUnname: '{repo} 改回顯示資料夾名',
+  ```
+
+  在 `kindEdit` 後面加 `kindRepo: 'repo',`。
+
+（spec 16.3 的英文寫成 `Tagged "{step}" with {repo}`、`Untagged "{step}"`，那是單獨一句的寫法；變動紀錄前面還有種類字 `Step`，所以表裡用小寫開頭，跟 `stepAdd` 等其他句子一樣。）
+
+`hooks/lines.ts`：
+
+在兩行 `import … from './i18n.ts'` 後面加：
+
+```ts
+import { repoLabel } from './view.ts'
+```
+
+`changeLine` 的 `case 'step.note'` 後面加：
+
+```ts
+    case 'step.repo':
+      return change.data.repo === ''
+        ? `${t(lang, 'kindStep')} ${t(lang, 'stepUntag', { step: name(change.data.step) })}`
+        : `${t(lang, 'kindStep')} ${t(lang, 'stepTag', { step: name(change.data.step), repo: repoLabel(plan, change.data.repo) })}`
+    case 'repo.name':
+      // On no item's history, but every kind has a sentence.
+      return change.data.name === ''
+        ? `${t(lang, 'kindRepo')} ${t(lang, 'repoUnname', { repo: change.data.repo })}`
+        : `${t(lang, 'kindRepo')} ${t(lang, 'repoName', { repo: change.data.repo, name: change.data.name })}`
+```
+
+`hooks/guide.ts` 的 `summary`：
+
+派給誰那一行後面加 repo（在 `note` 前面）：
+
+```ts
+      if (step.assignee !== undefined) line += `, assigned to ${step.assignee}`
+      if (step.repo !== undefined) line += `, repo: ${step.repo}${Object.hasOwn(plan.repoNames, step.repo) ? ` (${plan.repoNames[step.repo]})` : ''}`
+      if (step.note !== undefined) line += `, note: ${step.note}`
+```
+
+`if (items.length > 0) sections.push(['Items:', ...items].join('\n'))` 後面加：
+
+```ts
+  const named = Object.entries(plan.repoNames)
+  if (named.length > 0) sections.push(`Repo names: ${named.map(([repo, name]) => `${repo} = ${name}`).join(', ')}`)
+```
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `143 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): tag steps with a repo and give repos short names"
+```
+
+---
+
+### Task 19: repo 的畫面：項目列的進度、步驟和卡片上的短名、變動紀錄（spec 16.3）
+
+**Files:**
+- Modify: `plugins/plan-board/hooks/view.ts`（新的 `repoProgress`、`CHATTER`）
+- Modify: `plugins/plan-board/hooks/lines.ts`（`changeLine` 的 `step.add`、`FOLD`、`foldKeyOf`）
+- Modify: `plugins/plan-board/hooks/i18n.ts`
+- Modify: `plugins/plan-board/hooks/pane.tsx`（`whereText`、總表的項目列和步驟那一行）
+- Test: `tests/view.test.ts`、`tests/pane.test.ts`
+
+**Interfaces:**
+- Consumes: Task 18 的 `Step.repo`、`Plan.repoNames`、`repoLabel`、紀錄種類 `step.repo`／`repo.name`、`update_step` 的 `repo_name` op、`step.add` 的 `repo`、`tests/pane.test.ts` 的 `ERC`、`AUTH`。
+- Produces: `repoProgress(plan: Plan, itemId: string): { repo: string; done: number; total: number }[]`（`view.ts`，`repo` 是資料夾名）；`isChatter` 把 `step.repo` 算步驟瑣事；i18n 鍵 `posStepRepo`、`foldRetagged`；`tests/pane.test.ts` 的 helper `tagged()`。
+
+- [ ] **Step 1: 寫會失敗的測試，並改既有測試**
+
+`tests/view.test.ts`：最上面的 import 換成：
+
+```ts
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor, repoLabel, repoProgress } from '../hooks/view.ts'
+```
+
+最後加：
+
+```ts
+test('repo_progress_follows_first_appearance_and_counts_only_tagged_steps', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.add', { item: item('B') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 's1' }, repo: 'post_backend_eruncard' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 's2' }, repo: 'auth-center' }),
+      step('A', 's3'),
+      entry('step.add', { item: 'A', step: { id: 's4', title: 's4' }, repo: 'auth-center' }),
+      entry('step.repo', { step: 's3', repo: 'post_backend_eruncard' }),
+      step('A', 's5'),
+      status('s2', 'done'),
+      status('s4', 'done'),
+      status('s5', 'done'),
+      step('B', 'b1'),
+    ]),
+  )
+  expect(repoProgress(plan, 'A')).toEqual([
+    { repo: 'post_backend_eruncard', done: 0, total: 2 },
+    { repo: 'auth-center', done: 2, total: 2 },
+  ])
+  expect(repoProgress(plan, 'B')).toEqual([])
+  expect(repoProgress(plan, 'ghost')).toEqual([])
+  expect(isChatter(entry('step.repo', { step: 's1', repo: 'auth-center' }))).toBe(true)
+})
+
+test('repo_progress_follows_a_step_moved_to_another_item', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.add', { item: item('B') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 's1' }, repo: 'auth-center' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 's2' }, repo: 'auth-center' }),
+      entry('step.add', { item: 'B', step: { id: 'b1', title: 'b1' }, repo: 'thoth' }),
+      status('s2', 'done'),
+      entry('step.move', { step: 's2', item: 'B' }),
+    ]),
+  )
+  expect(repoProgress(plan, 'A')).toEqual([{ repo: 'auth-center', done: 0, total: 1 }])
+  expect(repoProgress(plan, 'B')).toEqual([
+    { repo: 'thoth', done: 0, total: 1 },
+    { repo: 'auth-center', done: 1, total: 1 },
+  ])
+})
+```
+
+`tests/pane.test.ts`：
+
+在 Task 18 加的 `const AUTH = …` 後面加：
+
+```ts
+/** The board with S1 done in auth-center, S2 in progress in ERC (shown as ERC後端) and S3 to do in auth-center. */
+const tagged = () => [
+  ...board(),
+  entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+  entry('step.repo', { step: S1, repo: AUTH }),
+  entry('step.repo', { step: S2, repo: ERC }),
+  entry('step.add', { item: B, step: { id: S3, title: '改 token 驗證' }, repo: AUTH }),
+]
+```
+
+在 `step_repo_and_repo_name_lines_in_both_languages` 後面加：
+
+```ts
+test('repos_show_by_short_name_on_items_steps_and_cards', ZH, async ($, on) => {
+  const entries = [...tagged(), blockedOnS2()]
+  const w = await start($, on, entries)
+  const fold = `fold:${B}:${entries[3].id}`
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    // Each repo's done/total after the state, in the order the item's steps first name it; an item with no tagged step shows none.
+    expect(await ui.find({ type: 'Button', text: '▸ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '· auth-center 1/2 · ERC後端 0/1' })).toBeDefined()
+    expect((await texts(ui)).filter(text => text.startsWith('· '))).toHaveLength(1)
+
+    // A tagged step: its mark, the repo dimmed, then its title.
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ type: 'Text', text: '⚑' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'ERC後端 ·' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '窗格兩個畫面' })).toBeDefined()
+    expect((await texts(ui)).filter(text => text === 'auth-center ·')).toHaveLength(2)
+    expect(await ui.find({ type: 'Text', text: '改 token 驗證' })).toBeDefined()
+
+    // Retags are step chatter; inside the fold, a tag and an add name the repo by its short name.
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toMatch(/▸ 步驟：新增 3 個、做完 1 個、開始 1 個、改標 repo 2 個$/)
+    await ui.press({ key: fold })
+    expect(await ui.find({ type: 'Button', text: /步驟 「窗格兩個畫面」標成 ERC後端$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /步驟 新增「改 token 驗證」到「決定看板 v1」（auth-center）$/ })).toBeDefined()
+
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: '決定看板 v1 · 第 1 項 · 卡在「窗格兩個畫面」（ERC後端）' })).toBeDefined()
+    await ui.unmount()
+  }
+  expect(t('en', 'posStepRepo' as never, { item: 'Board', n: 1, step: 'Format', repo: 'ERC backend' })).toBe('Board · item 1 · stuck at "Format" (ERC backend)')
+})
+
+test('a_new_or_dropped_short_name_shows_everywhere_at_once', ZH, async ($, on) => {
+  const entries = tagged()
+  const w = await start($, on, entries)
+  const rename = (name: string) => $.tool.call({ tool: tool('update_step'), why: '換個好認的名字', ops: [{ action: 'repo_name', repo: ERC, name }] })
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    // Naming a repo again with the name it has is no clash.
+    expect((await rename('ERC後端')).deny).toBeUndefined()
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `fold:${B}:${entries[3].id}` })
+    expect(await ui.find({ type: 'Text', text: 'ERC後端 ·' })).toBeDefined()
+
+    await rename('ERC主程式')
+    expect(await ui.find({ type: 'Text', text: '· auth-center 1/2 · ERC主程式 0/1' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'ERC主程式 ·' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /步驟 「窗格兩個畫面」標成 ERC主程式$/ })).toBeDefined()
+    expect((await texts(ui)).some(text => text.includes('ERC後端'))).toBe(false)
+
+    await rename('')
+    expect(await ui.find({ type: 'Text', text: `· auth-center 1/2 · ${ERC} 0/1` })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: `${ERC} ·` })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: new RegExp(`步驟 「窗格兩個畫面」標成 ${ERC}$`) })).toBeDefined()
+    expect((await texts(ui)).some(text => text.includes('ERC主程式'))).toBe(false)
+    await ui.unmount()
+  }
+})
+
+test('history_names_a_repo_by_its_current_short_name', async () => {
+  const entries = [
+    entry('item.add', { item: item(A, '看板', 'g') }),
+    entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+    entry('step.add', { item: A, step: { id: S1, title: '審查' }, status: 'doing', to: 'claude-b', repo: ERC }),
+    entry('step.add', { item: A, step: { id: S2, title: '定格式' }, repo: '' }),
+    entry('step.repo', { step: S2, repo: ERC }),
+  ]
+  const named = await replay(await logText(entries))
+  const [added, plain, retag] = named.applied.slice(2)
+  expect(changeLine(added, named, 'zh-TW')).toBe('步驟 新增「審查」到「看板」（進行中、派給 claude-b、ERC後端）')
+  expect(changeLine(added, named, 'en')).toBe('Step added "審查" to "看板" (in progress, assigned to claude-b, ERC後端)')
+  expect(changeLine(plain, named, 'zh-TW')).toBe('步驟 新增「定格式」到「看板」')
+  expect(changeLine(retag, named, 'zh-TW')).toBe('步驟 「定格式」標成 ERC後端')
+
+  // A later name, or none, changes every line that names the repo, the lines written before it too.
+  const renamed = await replay(await logText([...entries, entry('repo.name', { repo: ERC, name: 'ERC主程式' })]))
+  expect(changeLine(added, renamed, 'zh-TW')).toBe('步驟 新增「審查」到「看板」（進行中、派給 claude-b、ERC主程式）')
+  expect(changeLine(retag, renamed, 'zh-TW')).toBe('步驟 「定格式」標成 ERC主程式')
+  const dropped = await replay(await logText([...entries, entry('repo.name', { repo: ERC, name: '' })]))
+  expect(changeLine(added, dropped, 'zh-TW')).toBe(`步驟 新增「審查」到「看板」（進行中、派給 claude-b、${ERC}）`)
+  expect(changeLine(retag, dropped, 'en')).toBe(`Step tagged "定格式" with ${ERC}`)
+})
+```
+
+既有測試：
+
+- `fold_text_counts_each_kind_in_both_languages`：在 `entry('step.move', { step: S2, item: A }),` 後面加 `entry('step.repo', { step: S2, repo: AUTH }),`，前兩個 `expect` 換成：
+
+  ```ts
+    expect(foldText(chatter, 'zh-TW')).toBe('步驟：新增 2 個、做完 1 個、開始 1 個、改回還沒開始 1 個、改名 1 個、刪掉 1 個、移動 1 個、改派 1 個、改標 repo 1 個、連上文件 1 個')
+    expect(foldText(chatter, 'en')).toBe('Steps: 2 added, 1 done, 1 started, 1 back to not started, 1 renamed, 1 removed, 1 moved, 1 reassigned, 1 retagged, 1 docs linked')
+  ```
+
+  （第三個 `expect` 不變。）
+- `no_ids_in_zh_tw_text`：在 `entry('step.move', { step: S3, item: B }),` 後面加：
+
+  ```ts
+      entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+      entry('step.repo', { step: S2, repo: ERC }),
+      entry('step.repo', { step: S0, repo: AUTH }),
+      entry('step.add', { item: B, step: { id: '55555555', title: '改 token 驗證' }, repo: AUTH }),
+  ```
+
+  在 `seen.push(...(await texts(ui)))` 後面加：
+
+  ```ts
+      expect(seen).toContain('· auth-center 1/1')
+      expect(seen).toContain('· ERC後端 0/1 · auth-center 0/1')
+  ```
+
+  在 `const cardTexts = await texts(ui)` 後面加：
+
+  ```ts
+      expect(cardTexts).toContain('決定看板 v1 · 第 2 項 · 卡在「窗格兩個畫面」（ERC後端）')
+  ```
+
+- `i18n_tables_have_the_same_keys` 的 `words`，Task 18 加的那一行後面再加一行：
+
+  ```ts
+      '{item} · 第 {n} 項 · 卡在「{step}」（{repo}）', '改標 repo {n} 個',
+  ```
+
+- [ ] **Step 2: 跑測試，確認新的測試失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: `120 pass`、`7 fail`。`tests/view.test.ts` 整個檔案載入失敗（`(fail) the file did not load`：`repoProgress` 還不存在）；另外 6 個 FAIL：`repos_show_by_short_name_on_items_steps_and_cards`、`a_new_or_dropped_short_name_shows_everywhere_at_once`、`history_names_a_repo_by_its_current_short_name`、`fold_text_counts_each_kind_in_both_languages`（`step.repo` 掉進 `foldKeyOf` 的 `default`，變成「連上文件 2 個」）、`no_ids_in_zh_tw_text`、`i18n_tables_have_the_same_keys`。
+
+- [ ] **Step 3: 實作**
+
+`hooks/view.ts`：
+
+`repoLabel` 後面加：
+
+```ts
+/** Each repo the item's steps are tagged with, in the order a step first names it: how many of its steps are done, of how many. Untagged steps count for none. */
+export function repoProgress(plan: Plan, itemId: string): { repo: string; done: number; total: number }[] {
+  if (!Object.hasOwn(plan.items, itemId)) return []
+  const tally = new Map<string, { repo: string; done: number; total: number }>()
+  for (const stepId of plan.items[itemId].steps) {
+    const repo = plan.steps[stepId]?.repo
+    if (repo === undefined) continue
+    const row = tally.get(repo) ?? { repo, done: 0, total: 0 }
+    row.total += 1
+    if (plan.steps[stepId].status === 'done') row.done += 1
+    tally.set(repo, row)
+  }
+  return [...tally.values()]
+}
+```
+
+`CHATTER` 換成（多 `step.repo`）：
+
+```ts
+/** Step-level chatter, folded in the history; step.note and repo.name never reach the history at all. */
+const CHATTER: ReadonlySet<string> = new Set(['step.add', 'step.edit', 'step.remove', 'step.move', 'step.assign', 'step.status', 'step.repo', 'item.link'])
+```
+
+`hooks/i18n.ts`：
+
+- `EN` 在 `posStep` 後面加 `posStepRepo: '{item} · item {n} · stuck at "{step}" ({repo})',`；在 `foldReassigned` 後面加 `foldRetagged: '{n} retagged',`。
+- `ZH_TW` 在 `posStep` 後面加 `posStepRepo: '{item} · 第 {n} 項 · 卡在「{step}」（{repo}）',`；在 `foldReassigned` 後面加 `foldRetagged: '改標 repo {n} 個',`。
+
+`hooks/lines.ts`：
+
+`changeLine` 的 `case 'step.add'` 換成（括號尾巴最後多列 repo，用現在的短名）：
+
+```ts
+    case 'step.add': {
+      const { step, item, status, to, repo } = change.data
+      const how: string[] = []
+      if (status === 'doing' || status === 'done') how.push(t(lang, status === 'done' ? 'stepDone' : 'stepDoing'))
+      if (to !== undefined && to !== '') how.push(assignedText(to, lang))
+      if (repo !== undefined && repo !== '') how.push(repoLabel(plan, repo))
+      const tail = how.length === 0 ? '' : lang === 'zh-TW' ? `（${how.join('、')}）` : ` (${how.join(', ')})`
+      return `${t(lang, 'kindStep')} ${t(lang, 'stepAdd', { step: step.title, item: name(item) })}${tail}`
+    }
+```
+
+`FOLD` 換成（「改標 repo」接在「改派」後面、「連上文件」前面）：
+
+```ts
+const FOLD: Key[] = ['foldAdded', 'foldDone', 'foldStarted', 'foldBack', 'foldRenamed', 'foldRemoved', 'foldMoved', 'foldReassigned', 'foldRetagged', 'foldLinked']
+```
+
+`foldKeyOf` 的 `case 'step.assign'` 到結尾換成（每一種瑣事都明寫，不靠 `default`）：
+
+```ts
+    case 'step.assign':
+      return 'foldReassigned'
+    case 'step.repo':
+      return 'foldRetagged'
+    case 'item.link':
+      return 'foldLinked'
+    default:
+      // Only chatter is folded (isChatter); a kind listed there must have its own case above.
+      return 'foldLinked'
+  }
+}
+```
+
+`hooks/pane.tsx`：
+
+`./view.ts` 那行 import 換成：
+
+```ts
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, itemStates, openCards, recentFor, repoLabel, repoProgress } from './view.ts'
+```
+
+`whereText` 換成：
+
+```ts
+function whereText(current: Plan, card: Card, lang: Lang): string {
+  const where = cardPosition(current, card)
+  if (where.item === undefined) return t(lang, 'posOther')
+  const n = where.index ?? 0
+  if (where.step === undefined) return t(lang, 'posItem', { item: where.item.title, n })
+  const vars = { item: where.item.title, n, step: where.step.title }
+  return where.step.repo === undefined ? t(lang, 'posStep', vars) : t(lang, 'posStepRepo', { ...vars, repo: repoLabel(current, where.step.repo) })
+}
+```
+
+`overview` 的項目列：把
+
+```tsx
+          const label = `${isOpen ? '▾' : '▸'} ${item.title} · ${t(lang, STATE_KEY[states[id]])}${hasBlocked ? ' ⚑' : ''}`
+          return (
+            <Box key={`box:item:${id}`} flexDirection="column">
+              <Button key={`item:${id}`} plain label={label} onPress={() => actions.toggle(id)} />
+```
+
+換成
+
+```tsx
+          const label = `${isOpen ? '▾' : '▸'} ${item.title} · ${t(lang, STATE_KEY[states[id]])}${hasBlocked ? ' ⚑' : ''}`
+          // How far each repo is, dimmed after the state; it wraps rather than being cut.
+          const progress = repoProgress(current, id)
+            .map(row => `· ${repoLabel(current, row.repo)} ${row.done}/${row.total}`)
+            .join(' ')
+          const itemButton = <Button key={`item:${id}`} plain label={label} onPress={() => actions.toggle(id)} />
+          return (
+            <Box key={`box:item:${id}`} flexDirection="column">
+              {progress === '' ? (
+                itemButton
+              ) : (
+                <Box flexDirection="row" gap={1}>
+                  {itemButton}
+                  <Box flexShrink={1}>
+                    <Text dimColor wrap="wrap">
+                      {progress}
+                    </Text>
+                  </Box>
+                </Box>
+              )}
+```
+
+步驟那一行：把
+
+```tsx
+                      return (
+                        <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
+                          <Text>{`${markOf(step, waiting !== undefined, lang)} ${step.title}`}</Text>
+```
+
+換成
+
+```tsx
+                      const mark = markOf(step, waiting !== undefined, lang)
+                      return (
+                        <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
+                          {step.repo === undefined ? (
+                            <Text>{`${mark} ${step.title}`}</Text>
+                          ) : (
+                            <Box flexDirection="row" gap={1}>
+                              <Text>{mark}</Text>
+                              <Text dimColor>{`${repoLabel(current, step.repo)} ·`}</Text>
+                              <Text>{step.title}</Text>
+                            </Box>
+                          )}
+```
+
+（派給誰、備註、證據那幾個 `Text` 不變，照舊接在後面。輸入框上方那一列不改，spec 16.3。）
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `148 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): show repo progress, short names and retags in the pane"
+```
+
+---
+
+### Task 20: 想法也要結案（spec 16.4）
+
+**Files:**
+- Modify: `plugins/plan-board/hooks/view.ts`（`isAnswered`、新的 `isThoughtOnly`）
+- Modify: `plugins/plan-board/hooks/guide.ts`（`summary`）
+- Modify: `plugins/plan-board/hooks/local.ts`（`batchMessage`、`blockingMessage`）
+- Modify: `plugins/plan-board/hooks/pane.tsx`（`isSent`、`cardBox`）
+- Test: `tests/view.test.ts`、`tests/local.test.ts`、`tests/pane.test.ts`
+
+**Interfaces:**
+- Consumes: 既有的 `isAnswered`、`bandCounts`、`summary`、`batchMessage`、`blockingMessage`、`cardBox`；測試只用 `tests/pane.test.ts` 現成的 `add`、`addAction`、`board`、`band`、`localOf`、`until`，不新增 helper。
+- Produces: `isAnswered(local, cardId)` 的新意思：送了選項、略過或想法都算已回答；`isThoughtOnly(local: Local, cardId: string): boolean`（`view.ts`）：已回答、而且只有想法。
+
+- [ ] **Step 1: 寫會失敗的測試，並改既有測試**
+
+`tests/view.test.ts`：最上面的 import 換成：
+
+```ts
+import {
+  bandCounts,
+  blockedSteps,
+  cardPosition,
+  foldHistory,
+  historyOf,
+  isAnswered,
+  isChatter,
+  isThoughtOnly,
+  itemStates,
+  openCards,
+  recentFor,
+  repoLabel,
+  repoProgress,
+} from '../hooks/view.ts'
+```
+
+整個 `a_thought_only_card_still_counts_as_waiting` 換成：
+
+```ts
+test('a_thought_only_card_is_answered_and_the_ai_is_told_to_settle_it', async () => {
+  const plan = await replay(await logText([entry('item.add', { item: item('A') }), card('c1'), card('c2'), card('c3'), card('c4')]))
+  const local: Local = {
+    ...emptyLocal,
+    sent: {
+      c1: { draft: 'let me think', at: 1 },
+      c2: { choice: 'a', at: 1 },
+      c3: { isDismissed: true, at: 1 },
+      c4: { choice: 'a', draft: 'and keep it small', at: 1 },
+    },
+  }
+  expect(['c1', 'c2', 'c3', 'c4'].map(id => isAnswered(local, id))).toEqual([true, true, true, true])
+  expect(['c1', 'c2', 'c3', 'c4'].map(id => isThoughtOnly(local, id))).toEqual([true, false, false, false])
+  expect(isAnswered(local, 'c5')).toBe(false)
+  expect(isThoughtOnly(local, 'toString')).toBe(false)
+  expect(bandCounts(plan, local).waiting).toBe(0)
+  expect(bandCounts(plan, { ...emptyLocal, sent: { c1: { draft: 'x', at: 1 } } }).waiting).toBe(3)
+  const told = summary(plan, local)
+  expect(told).toContain('[c1] q-c1 {question} (the user answered with a thought; settle this card now)')
+  expect(told).toContain('[c2] q-c2 {question} (sent, waiting for you to resolve)')
+  // A choice sent with a thought is answered by the choice, as before.
+  expect(told).toContain('[c4] q-c4 {question} (sent, waiting for you to resolve)')
+})
+```
+
+`tests/local.test.ts`：
+
+- `batch_message_text` 的
+
+  ```ts
+    expect(text).toContain('(Close each card with resolve_decision, or apply_change for an approved proposal. A card with only a thought stays open until it is settled.)')
+  ```
+
+  換成
+
+  ```ts
+    expect(text).toContain(
+      '(Close every card here now: resolve_decision, or apply_change for an approved proposal. When a thought does not answer a card, resolve it and open a new card that takes the thought into account.)',
+    )
+  ```
+
+- `blocking_message_text` 的
+
+  ```ts
+    expect(thought).toContain('(If this settles it, resolve the card; otherwise reply and keep it open.)')
+  ```
+
+  換成
+
+  ```ts
+    expect(thought).toBe(
+      'My thoughts on "Install where?" [c1]: 先看看\n(Settle this card now: if this answers it, resolve the card with that outcome; if it does not, resolve it and open a new card that takes the thought into account.)',
+    )
+    // A choice sent with a thought reads as before.
+    expect(blockingMessage(card('c1'), { choice: 'There', draft: '先看看', at: 1 })).toBe('Decision made for "Install where?" [c1]: There\nthought: 先看看')
+  ```
+
+`tests/pane.test.ts`：
+
+整個 `thought_only_card_stays_interactive_after_sending` 換成：
+
+```ts
+test('a_thought_only_card_dims_and_waits_for_the_ai', ZH, async ($, on) => {
+  const w = await start($, on, null)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await add($, 'Which cache?')
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    // A thought on a card that does not block is staged like a pick.
+    await ui.input({ key: `${id}:note`, text: '先看 CI 用哪個' })
+    expect(w.submitted).toEqual([])
+    expect(await ui.find({ type: 'Text', text: '想法：先看 CI 用哪個（待送出）' })).toBeDefined()
+    await ui.press({ key: 'send' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted[0]).toContain('thought: 先看 CI 用哪個')
+    expect(w.submitted[0]).toContain('When a thought does not answer a card, resolve it and open a new card')
+    expect(localOf(w).sent[id]).toEqual({ draft: '先看 CI 用哪個', at: expect.any(Number) })
+
+    // Answered: dimmed like a choice, with what was said under it, until the AI closes it.
+    expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '你的想法：先看 CI 用哪個' })).toBeDefined()
+    expect(await ui.find({ key: `${id}:0` })).toBeUndefined()
+    expect(await ui.find({ key: `${id}:note` })).toBeUndefined()
+    expect(await ui.find({ key: `${id}:x` })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+    const line = await band($, surface)
+    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 0 件事等你')
+    await line.unmount()
+
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '先看 CI' })
+    expect(await ui.find({ text: '✓ 目前沒有等你的事' })).toBeDefined()
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+```
+
+整個 `a_blocking_thought_leaves_the_card_open_but_a_dismissal_dims_it` 換成：
+
+```ts
+test('a_blocking_thought_dims_the_card_at_once_and_the_step_keeps_its_flag', ZH, async ($, on) => {
+  const w = await start($, on, board())
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const blocking = await add($, 'Which port?', { blocking: true, item: B, step: S2 })
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    await ui.input({ key: `${blocking}:note`, text: '看 CI 用哪個' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]).toContain('My thoughts on "Which port?"')
+    expect(w.submitted[0]).toContain('(Settle this card now:')
+    expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '你的想法：看 CI 用哪個' })).toBeDefined()
+    expect(await ui.find({ key: `${blocking}:0` })).toBeUndefined()
+    expect(await ui.find({ key: `${blocking}:note` })).toBeUndefined()
+    expect(await ui.find({ key: 'send' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+
+    // The step waits on the card until the AI settles it.
+    await ui.press({ key: 'view:overview' })
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ type: 'Button', text: '▾ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
+    expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: blocking, outcome: '先用 8080，另開卡問 CI' })
+    expect(await ui.find({ text: '● 窗格兩個畫面' })).toBeDefined()
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+
+test('a_choice_sent_with_a_thought_dims_as_before', ZH, async ($, on) => {
+  const w = await start($, on, null)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await add($, 'Which cache?')
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    await ui.press({ key: `${id}:0` })
+    await ui.input({ key: `${id}:note`, text: '記憶體要夠' })
+    await ui.press({ key: 'send' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted[0]).toContain('Which cache? → LRU')
+    expect(w.submitted[0]).toContain('  thought: 記憶體要夠')
+    expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
+    // The choice answers the card; the thought is not shown under it.
+    expect(await ui.find({ type: 'Text', text: '你的想法：記憶體要夠' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: 'LRU' })
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+```
+
+整個 `action_card_skip_and_thought_go_out_at_once` 換成（想法一送出，卡片就變淡，所以略過改用第二張卡）：
+
+```ts
+test('action_card_skip_and_thought_go_out_at_once', ZH, async ($, on) => {
+  const w = await start($, on, null)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await addAction($)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: '其他' })).toBeDefined()
+    await ui.input({ key: `${id}:note`, text: '我沒有權限' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted[0]).toContain(`My thoughts on "${ACTION}"`)
+    // A thought answers the card as a done would: dimmed until the AI checks and closes it.
+    expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '你的想法：我沒有權限' })).toBeDefined()
+    expect(await ui.find({ key: `${id}:done` })).toBeUndefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '使用者沒有權限，另開一張卡' })
+
+    const skipped = await addAction($)
+    await ui.press({ key: `${skipped}:x` })
+    await until(ui, () => w.submitted.length > 1)
+    expect(w.submitted[1]).toContain('dismissed')
+    expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: skipped, outcome: '使用者略過' })
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+```
+
+- [ ] **Step 2: 跑測試，確認新的測試失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: `122 pass`、`6 fail`。`tests/view.test.ts` 整個檔案載入失敗（`(fail) the file did not load`：`isThoughtOnly` 還不存在）；另外 5 個 FAIL：`batch_message_text`、`blocking_message_text`、`a_thought_only_card_dims_and_waits_for_the_ai`、`a_blocking_thought_dims_the_card_at_once_and_the_step_keeps_its_flag`、`action_card_skip_and_thought_go_out_at_once`。`a_choice_sent_with_a_thought_dims_as_before` 已經會過（它守住 Review Focus 5：只有「只送想法」的卡改了樣子）。
+
+- [ ] **Step 3: 實作**
+
+`hooks/view.ts`：`isAnswered` 換成下面兩個：
+
+```ts
+/** Whether the user answered the card: a sent choice, a skip or a thought. Each waits for the AI to close the card. */
+export const isAnswered = (local: Local, cardId: string): boolean => {
+  if (!Object.hasOwn(local.sent, cardId)) return false
+  const pick = local.sent[cardId]
+  return pick.choice !== undefined || pick.isDismissed === true || (pick.draft !== undefined && pick.draft !== '')
+}
+
+/** Whether the answer is a thought alone, which the AI settles at once: resolved, and a new card when it does not answer. */
+export const isThoughtOnly = (local: Local, cardId: string): boolean =>
+  isAnswered(local, cardId) && local.sent[cardId].choice === undefined && local.sent[cardId].isDismissed !== true
+```
+
+（`bandCounts`、分頁的數字、`firstId` 都用 `isAnswered`，不用另外改；`blockedSteps` 只看卡片結案了沒，所以 ⚑ 照舊到結案。）
+
+`hooks/guide.ts`：import 換成 `import { blockedSteps, isAnswered, isThoughtOnly, itemStates, openCards } from './view.ts'`；`summary` 的
+
+```ts
+      if (isAnswered(local, card.id)) line += ' (sent, waiting for you to resolve)'
+      else if (Object.hasOwn(local.sent, card.id)) line += ' (the user sent a thought only; the card is still open for their choice)'
+```
+
+換成
+
+```ts
+      if (isThoughtOnly(local, card.id)) line += ' (the user answered with a thought; settle this card now)'
+      else if (isAnswered(local, card.id)) line += ' (sent, waiting for you to resolve)'
+```
+
+`hooks/local.ts`：
+
+`batchMessage` 結尾的 `lines.push(…)` 換成：
+
+```ts
+  lines.push(
+    '(Close every card here now: resolve_decision, or apply_change for an approved proposal. When a thought does not answer a card, resolve it and open a new card that takes the thought into account.)',
+  )
+```
+
+`blockingMessage` 只有想法那一句換成：
+
+```ts
+    return `My thoughts on "${card.question}" [${card.id}]: ${pick.draft}\n(Settle this card now: if this answers it, resolve the card with that outcome; if it does not, resolve it and open a new card that takes the thought into account.)`
+```
+
+`hooks/pane.tsx`：
+
+`./view.ts` 那行 import 加 `isThoughtOnly`：
+
+```ts
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, isThoughtOnly, itemStates, openCards, recentFor, repoLabel, repoProgress } from './view.ts'
+```
+
+`isSent` 上面那行註解換成：
+
+```tsx
+  // A card the user answered (a choice, a skip or a thought) is dimmed until the AI closes it.
+```
+
+`cardBox` 的 `if (isSent(card)) { … }` 換成（只送了想法的卡，底下多一行你的想法）：
+
+```tsx
+    if (isSent(card)) {
+      return (
+        <Box key={`card:box:${card.id}`} flexDirection="column" {...border('gray')}>
+          <Text dimColor wrap="wrap">
+            {card.question}
+          </Text>
+          <Text dimColor wrap="wrap">
+            {where}
+          </Text>
+          <Text dimColor>{t(lang, isAction ? 'sentChecking' : 'sentWaiting')}</Text>
+          {isThoughtOnly(mine, card.id) && thought !== undefined && (
+            <Text dimColor wrap="wrap">
+              {t(lang, 'yourThought', { draft: thought })}
+            </Text>
+          )}
+        </Box>
+      )
+    }
+```
+
+刪掉 `const yours = thought !== undefined && ( … )` 那一段，以及待你處理卡和決定卡裡各一個 `{yours}`：送過東西的卡一律走上面變淡的那一段，那兩處已經不會顯示它。
+
+送出的時機不變（spec 16.4）：`register.tsx` 的 `act` 照舊，`blocking` 的決定卡和待你處理卡立刻送，其他暫存。
+
+- [ ] **Step 4: 跑測試，確認全過**
+
+Run: `claude plugin test plugins/plan-board` → `149 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board
+git commit -m "feat(plan-board): a card answered with a thought is dimmed and settled by the AI"
+```
+
+---
+
+### Task 21: 給 AI 的說明、README、版本（spec 16.1、16.2、16.4、16.5）
+
+**Files:**
+- Modify: `plugins/plan-board/hooks/guide.ts`（`GUIDE`）
+- Modify: `plugins/plan-board/.claude-plugin/plugin.json`（`version`）
+- Modify: `README.md`、`README.zh-TW.md`（「Where the plan lives」／「計畫放在哪裡」、「Items and steps」／「項目和步驟」）
+- Test: `tests/view.test.ts`
+
+**Interfaces:**
+- Consumes: Task 18–20 的 op 名稱 `repo`、`repo_name`、`add` 的 `repo`；摘要的 `Repo names:` 那一行；只送想法的卡要當下結案。
+- Produces: 無。
+
+- [ ] **Step 1: 寫會失敗的測試**
+
+`tests/view.test.ts` 最後加：
+
+```ts
+test('guide_covers_repos_short_names_and_settling_thoughts', () => {
+  expect(GUIDE).toContain('action repo,')
+  expect(GUIDE).toContain('repo on the add op')
+  expect(GUIDE).toContain('one repo only')
+  expect(GUIDE).toContain('action repo_name')
+  expect(GUIDE).toContain('Repo names line')
+  expect(GUIDE).toContain('answered with a thought is settled now')
+  expect(GUIDE).toContain('open a new card')
+  expect(GUIDE).toContain("apply_change with the user's words as chat")
+})
+```
+
+- [ ] **Step 2: 跑測試，確認失敗**
+
+Run: `claude plugin test plugins/plan-board`
+Expected: `149 pass`、`1 fail`：`guide_covers_repos_short_names_and_settling_thoughts`。
+
+- [ ] **Step 3: 實作**
+
+`hooks/guide.ts` 的 `GUIDE`：
+
+在 `'- Where a step stands or who it waits on goes in its note …'` 那一行後面加：
+
+```ts
+  "- When one session works across several repos, tag each step with the repo it is done in: update_step action repo, or repo on the add op, with the repo's folder name (such as auth-center). Leave steps untagged in a plan that covers one repo only.",
+  "- The first time you tag a step with a repo, give that repo a short name the user knows in the same call: update_step action repo_name, a few words in the user's language (such as ERC後端). After that use the names on the summary's Repo names line and do not make up another; change one only when the user asks.",
+```
+
+在 `'- Choices from the pane reach you as messages. …'` 那一行後面加：
+
+```ts
+  "- A card the user answered with a thought is settled now, in the same turn: if the thought answers it, resolve the card with that outcome; if it does not, resolve it and open a new card whose question and options take the thought into account, instead of only replying in chat. For a proposal, a thought that agrees means apply_change with the user's words as chat; one that changes or rejects it means resolve the card and, if needed, propose again.",
+```
+
+`.claude-plugin/plugin.json`：`"version": "0.2.1"` → `"version": "0.3.0"`。
+
+`README.md`：
+
+「Where the plan lives」在 `- In local mode the plan is the same log text, …` 那一點後面加：
+
+```markdown
+- When one session looks after several repos, start it in the folder that holds them. The plan is then that folder's own local plan, and each step can say which repo it is done in (see "Items and steps").
+```
+
+「Items and steps」：
+
+表格最後一列換成：
+
+```markdown
+| Steps: add, reword, remove, move to another item, assign, change status, note where they stand, tag with the repo they are done in; short names for repos | The AI uses `update_step` | No, but every change is logged with a reason |
+```
+
+在 `- A step is marked done only with evidence, …` 那一點後面加：
+
+```markdown
+- When one session works across several repos, each step can be tagged with the repo it is done in (the repo's folder name). The pane shows each repo by a short name the AI gives it, such as "ERC backend"; to change one, tell the AI. An item with tagged steps shows how far each repo is after its state, such as "auth-center 2/3 · ERC backend 1/4" (untagged steps are not counted); a tagged step shows its repo before its title, and a card on it names the repo after the step it is stuck at.
+```
+
+`- A card you answered only with a thought stays open: …` 那一點換成：
+
+```markdown
+- Every card you answer, with a choice, a skip or only a thought, is dimmed until the AI closes it. A card answered with a thought shows your thought; the AI closes it right away, and when the thought does not answer the question it opens a new card that takes the thought into account.
+```
+
+`README.zh-TW.md`：
+
+「計畫放在哪裡」在 `- 本機模式的計畫是同一份紀錄文字，…` 那一點後面加：
+
+```markdown
+- 一個 session 管好幾個 repo 時，從這些 repo 的上層資料夾開 session，計畫就是那個資料夾的一份本機計畫；每個步驟可以標在哪個 repo 做（見「項目和步驟」）。
+```
+
+「項目和步驟」：
+
+表格最後一列換成：
+
+```markdown
+| 步驟：新增、改字、刪掉、移到別的項目、改派、改狀態、寫備註、標在哪個 repo 做；repo 的短名 | AI 用 `update_step` | 不用，但每次都記錄原因 |
+```
+
+在 `- 步驟標做完一定要附證據，…` 那一點後面加：
+
+```markdown
+- 一個 session 同時動到好幾個 repo 時，每個步驟可以標在哪個 repo 做（寫 repo 的資料夾名）。畫面上用 AI 替每個 repo 取的短名顯示，例如「ERC後端」；要改就跟 AI 說。有步驟標了 repo 的項目，會在狀態後面接各 repo 的進度，例如「auth-center 2/3 · ERC後端 1/4」（沒標 repo 的步驟不算）；標了 repo 的步驟在標題前面顯示 repo，指到它的卡片也會在「卡在…」後面寫出 repo。
+```
+
+`- 只用想法回答的卡片會繼續開著：…` 那一點換成：
+
+```markdown
+- 不管是選了選項、略過，還是只寫了想法，送出之後卡片都會變淡，直到 AI 結案。只寫想法的卡會顯示你的想法；AI 會當下結案，想法沒回答到問題時，會依你的想法再開一張新卡。
+```
+
+- [ ] **Step 4: 跑全部檢查**
+
+Run: `claude plugin test plugins/plan-board` → `150 pass`、`0 fail`。
+Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
+Run: `claude plugin validate .` → 沒有錯誤。
+Run: `node --test tests-git/merge.test.ts` → `fail 0`。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/plan-board README.md README.zh-TW.md
+git commit -m "docs(plan-board): guide, README and 0.3.0 for repos and settled thoughts"
+```
