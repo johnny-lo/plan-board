@@ -1,5 +1,5 @@
 import type { Local, Plan } from '../types'
-import { blockedSteps, isAnswered, itemStates, openCards } from './view.ts'
+import { blockedSteps, isAnswered, isThoughtOnly, itemStates, openCards } from './view.ts'
 
 export const GUIDE: string = [
   '# Plan board',
@@ -60,8 +60,8 @@ export function summary(plan: Plan, local: Local): string {
     const lines = cards.map(card => {
       let line = `- [${card.id}] ${card.question} {${card.type}}`
       if (card.blocking) line += ' (blocking)'
-      if (isAnswered(local, card.id)) line += ' (sent, waiting for you to resolve)'
-      else if (Object.hasOwn(local.sent, card.id)) line += ' (the user sent a thought only; the card is still open for their choice)'
+      if (isThoughtOnly(local, card.id)) line += ' (the user answered with a thought; settle this card now)'
+      else if (isAnswered(local, card.id)) line += ' (sent, waiting for you to resolve)'
       return line
     })
     sections.push(['Open cards:', ...lines].join('\n'))

@@ -130,7 +130,7 @@ export function batchMessage(plan: Plan, sent: [string, Pick][]): string {
     if (pick.draft !== undefined && pick.draft !== '') lines.push(`  thought: ${pick.draft}`)
   }
   lines.push(
-    '(Close each card with resolve_decision, or apply_change for an approved proposal. A card with only a thought stays open until it is settled.)',
+    '(Close every card here now: resolve_decision, or apply_change for an approved proposal. When a thought does not answer a card, resolve it and open a new card that takes the thought into account.)',
   )
   return lines.join('\n')
 }
@@ -138,7 +138,7 @@ export function batchMessage(plan: Plan, sent: [string, Pick][]): string {
 export function blockingMessage(card: Card, pick: Pick): string {
   const hasDraft = pick.draft !== undefined && pick.draft !== ''
   if (pick.choice === undefined && pick.isDismissed !== true && hasDraft) {
-    return `My thoughts on "${card.question}" [${card.id}]: ${pick.draft}\n(If this settles it, resolve the card; otherwise reply and keep it open.)`
+    return `My thoughts on "${card.question}" [${card.id}]: ${pick.draft}\n(Settle this card now: if this answers it, resolve the card with that outcome; if it does not, resolve it and open a new card that takes the thought into account.)`
   }
   if (card.type === 'action' && pick.choice === 'done') {
     const done = `Done by the user: "${card.question}" [${card.id}]. Check it if you can, then resolve the card with resolve_decision.`

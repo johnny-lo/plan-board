@@ -3,7 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import { t } from './i18n.ts'
 import type { Key, Lang } from './i18n.ts'
 import { assignedText, changeLine, fit, foldText, historyLines, stamp, textWidth } from './lines.ts'
-import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, itemStates, openCards, recentFor, repoLabel, repoProgress } from './view.ts'
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, isThoughtOnly, itemStates, openCards, recentFor, repoLabel, repoProgress } from './view.ts'
 import type { Row } from './view.ts'
 import type { Card, Entry, ItemState, Local, Plan, Step } from '../types'
 
@@ -64,7 +64,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
   const open = openCards(current)
   const counts = bandCounts(current, mine)
   const stagedCount = open.filter(card => Object.hasOwn(mine.staged, card.id)).length
-  // A card the user answered with a choice or a skip is dimmed; one that only got a thought stays open to answer.
+  // A card the user answered (a choice, a skip or a thought) is dimmed until the AI closes it.
   const isSent = (card: Card): boolean => isAnswered(mine, card.id)
   // The card that opens by itself is the first one still waiting for the user.
   const firstId = open.find(card => !isSent(card))?.id
@@ -207,6 +207,11 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
             {where}
           </Text>
           <Text dimColor>{t(lang, isAction ? 'sentChecking' : 'sentWaiting')}</Text>
+          {isThoughtOnly(mine, card.id) && thought !== undefined && (
+            <Text dimColor wrap="wrap">
+              {t(lang, 'yourThought', { draft: thought })}
+            </Text>
+          )}
         </Box>
       )
     }
@@ -233,11 +238,6 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
           )}
         </Box>
         <Button key={`${card.id}:x`} plain dimColor role="dismiss" label="✕" onPress={() => actions.dismiss(card)} />
-      </Box>
-    )
-    const yours = thought !== undefined && (
-      <Box marginTop={1}>
-        <Text wrap="wrap">{t(lang, 'yourThought', { draft: thought })}</Text>
       </Box>
     )
     const typed = Object.hasOwn(typing, card.id) ? typing[card.id] : ''
@@ -270,7 +270,6 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
           <Box marginTop={1}>
             <Button key={`${card.id}:done`} plain {...hotkey(0)} label={t(lang, 'actionDone')} onPress={() => actions.choose(card, 'done')} />
           </Box>
-          {yours}
           {noteBox}
         </Box>
       )
@@ -340,7 +339,6 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
             })
           )}
         </Box>
-        {yours}
         {hasStaged && (
           <Box justifyContent="space-between" marginTop={1}>
             <Box flexDirection="column" flexShrink={1}>

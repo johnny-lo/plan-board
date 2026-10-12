@@ -516,71 +516,90 @@ const add = async ($: Engine, question: string, extra: Record<string, unknown> =
   return /card (\w{8})/.exec(String(added.result))?.[1] as string
 }
 
-test('thought_only_card_stays_interactive_after_sending', ZH, async ($, on) => {
+test('a_thought_only_card_dims_and_waits_for_the_ai', ZH, async ($, on) => {
   const w = await start($, on, null)
   for (const surface of SURFACES) {
     await fresh($, w)
     const id = await add($, 'Which cache?')
     const ui = await pane($, surface)
     await ui.press({ key: 'view:cards' })
+    // A thought on a card that does not block is staged like a pick.
     await ui.input({ key: `${id}:note`, text: '先看 CI 用哪個' })
+    expect(w.submitted).toEqual([])
+    expect(await ui.find({ type: 'Text', text: '想法：先看 CI 用哪個（待送出）' })).toBeDefined()
     await ui.press({ key: 'send' })
     await until(ui, () => w.submitted.length > 0)
     expect(w.submitted[0]).toContain('thought: 先看 CI 用哪個')
+    expect(w.submitted[0]).toContain('When a thought does not answer a card, resolve it and open a new card')
     expect(localOf(w).sent[id]).toEqual({ draft: '先看 CI 用哪個', at: expect.any(Number) })
 
-    // Still a card to answer: the options, the input, and what was said.
-    expect(await ui.find({ type: 'Button', key: `${id}:0` })).toBeDefined()
-    expect(await ui.find({ type: 'Button', key: `${id}:1` })).toBeDefined()
-    expect(await ui.find({ key: `${id}:note` })).toBeDefined()
-    expect(await ui.find({ key: `${id}:x` })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '你的想法：先看 CI 用哪個' })).toBeDefined()
-    expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（1）' })).toBeDefined()
-    const line = await band($, surface)
-    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 1 件事等你')
-    await line.unmount()
-
-    // A choice sent afterwards settles the waiting: the card is dimmed as before.
-    await ui.press({ key: `${id}:0` })
-    await ui.press({ key: 'send' })
-    await until(ui, () => w.submitted.length > 1)
+    // Answered: dimmed like a choice, with what was said under it, until the AI closes it.
     expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '你的想法：先看 CI 用哪個' })).toBeDefined()
     expect(await ui.find({ key: `${id}:0` })).toBeUndefined()
     expect(await ui.find({ key: `${id}:note` })).toBeUndefined()
+    expect(await ui.find({ key: `${id}:x` })).toBeUndefined()
     expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
-    const after = await band($, surface)
-    expect((await after.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 0 件事等你')
-    await after.unmount()
-    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: 'LRU' })
+    const line = await band($, surface)
+    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 0 件事等你')
+    await line.unmount()
+
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '先看 CI' })
+    expect(await ui.find({ text: '✓ 目前沒有等你的事' })).toBeDefined()
     await ui.unmount()
     w.submitted.length = 0
   }
 })
 
-test('a_blocking_thought_leaves_the_card_open_but_a_dismissal_dims_it', ZH, async ($, on) => {
-  const w = await start($, on, null)
+test('a_blocking_thought_dims_the_card_at_once_and_the_step_keeps_its_flag', ZH, async ($, on) => {
+  const w = await start($, on, board())
   for (const surface of SURFACES) {
     await fresh($, w)
-    const blocking = await add($, 'Which port?', { blocking: true })
-    const other = await add($, 'Which queue?')
+    const blocking = await add($, 'Which port?', { blocking: true, item: B, step: S2 })
     const ui = await pane($, surface)
     await ui.press({ key: 'view:cards' })
     await ui.input({ key: `${blocking}:note`, text: '看 CI 用哪個' })
     await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted).toHaveLength(1)
     expect(w.submitted[0]).toContain('My thoughts on "Which port?"')
-    expect(await ui.find({ key: `${blocking}:0` })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '你的想法：看 CI 用哪個' })).toBeDefined()
-    expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeUndefined()
-
-    await ui.press({ key: `card:${other}` })
-    await ui.press({ key: `${other}:x` })
-    await ui.press({ key: 'send' })
-    await until(ui, () => w.submitted.length > 1)
+    expect(w.submitted[0]).toContain('(Settle this card now:')
     expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
-    expect(await ui.find({ key: `${other}:x` })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（1）' })).toBeDefined()
-    for (const id of [blocking, other]) await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: 'noted' })
+    expect(await ui.find({ type: 'Text', text: '你的想法：看 CI 用哪個' })).toBeDefined()
+    expect(await ui.find({ key: `${blocking}:0` })).toBeUndefined()
+    expect(await ui.find({ key: `${blocking}:note` })).toBeUndefined()
+    expect(await ui.find({ key: 'send' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+
+    // The step waits on the card until the AI settles it.
+    await ui.press({ key: 'view:overview' })
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ type: 'Button', text: '▾ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
+    expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: blocking, outcome: '先用 8080，另開卡問 CI' })
+    expect(await ui.find({ text: '● 窗格兩個畫面' })).toBeDefined()
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+
+test('a_choice_sent_with_a_thought_dims_as_before', ZH, async ($, on) => {
+  const w = await start($, on, null)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const id = await add($, 'Which cache?')
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    await ui.press({ key: `${id}:0` })
+    await ui.input({ key: `${id}:note`, text: '記憶體要夠' })
+    await ui.press({ key: 'send' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(w.submitted[0]).toContain('Which cache? → LRU')
+    expect(w.submitted[0]).toContain('  thought: 記憶體要夠')
+    expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
+    // The choice answers the card; the thought is not shown under it.
+    expect(await ui.find({ type: 'Text', text: '你的想法：記憶體要夠' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: 'LRU' })
     await ui.unmount()
     w.submitted.length = 0
   }
@@ -907,14 +926,18 @@ test('action_card_skip_and_thought_go_out_at_once', ZH, async ($, on) => {
     await ui.input({ key: `${id}:note`, text: '我沒有權限' })
     await until(ui, () => w.submitted.length > 0)
     expect(w.submitted[0]).toContain(`My thoughts on "${ACTION}"`)
-    expect(await ui.find({ key: `${id}:done` })).toBeDefined()
+    // A thought answers the card as a done would: dimmed until the AI checks and closes it.
+    expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '你的想法：我沒有權限' })).toBeDefined()
+    expect(await ui.find({ key: `${id}:done` })).toBeUndefined()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '使用者沒有權限，另開一張卡' })
 
-    await ui.press({ key: `${id}:x` })
+    const skipped = await addAction($)
+    await ui.press({ key: `${skipped}:x` })
     await until(ui, () => w.submitted.length > 1)
     expect(w.submitted[1]).toContain('dismissed')
     expect(await ui.find({ text: '已送出，等 AI 確認' })).toBeDefined()
-    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '使用者略過' })
+    await $.tool.call({ tool: tool('resolve_decision'), card: skipped, outcome: '使用者略過' })
     await ui.unmount()
     w.submitted.length = 0
   }

@@ -34,12 +34,16 @@ export function openCards(plan: Plan): Card[] {
     })
 }
 
-/** Whether the user answered the card: a sent choice or a dismissal. A thought alone leaves it open. */
+/** Whether the user answered the card: a sent choice, a skip or a thought. Each waits for the AI to close the card. */
 export const isAnswered = (local: Local, cardId: string): boolean => {
   if (!Object.hasOwn(local.sent, cardId)) return false
   const pick = local.sent[cardId]
-  return pick.choice !== undefined || pick.isDismissed === true
+  return pick.choice !== undefined || pick.isDismissed === true || (pick.draft !== undefined && pick.draft !== '')
 }
+
+/** Whether the answer is a thought alone, which the AI settles at once: resolved, and a new card when it does not answer. */
+export const isThoughtOnly = (local: Local, cardId: string): boolean =>
+  isAnswered(local, cardId) && local.sent[cardId].choice === undefined && local.sent[cardId].isDismissed !== true
 
 export function blockedSteps(plan: Plan): Set<string> {
   const blocked = new Set<string>()

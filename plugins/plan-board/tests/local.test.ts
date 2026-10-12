@@ -96,7 +96,9 @@ test('batch_message_text', async () => {
   expect(text).toContain('- [p1] Add docs? → approve (call apply_change with this card)')
   expect(text).toContain('→ dismissed (resolve it: the user skipped this card)')
   expect(text).toContain('→ (no option picked)')
-  expect(text).toContain('(Close each card with resolve_decision, or apply_change for an approved proposal. A card with only a thought stays open until it is settled.)')
+  expect(text).toContain(
+    '(Close every card here now: resolve_decision, or apply_change for an approved proposal. When a thought does not answer a card, resolve it and open a new card that takes the thought into account.)',
+  )
 
   const reject = batchMessage(plan, [['p1', { choice: 'reject', at: 1 }]])
   expect(reject).toContain('- [p1] Add docs? → reject (resolve it as rejected)')
@@ -110,7 +112,11 @@ test('blocking_message_text', async () => {
   expect(blockingMessage(card('c1'), { isDismissed: true, at: 1 })).toContain('dismissed (resolve it: the user skipped this card)')
   const thought = blockingMessage(card('c1'), { draft: '先看看', at: 1 })
   expect(thought.startsWith('My thoughts on "Install where?" [c1]: 先看看')).toBe(true)
-  expect(thought).toContain('(If this settles it, resolve the card; otherwise reply and keep it open.)')
+  expect(thought).toBe(
+    'My thoughts on "Install where?" [c1]: 先看看\n(Settle this card now: if this answers it, resolve the card with that outcome; if it does not, resolve it and open a new card that takes the thought into account.)',
+  )
+  // A choice sent with a thought reads as before.
+  expect(blockingMessage(card('c1'), { choice: 'There', draft: '先看看', at: 1 })).toBe('Decision made for "Install where?" [c1]: There\nthought: 先看看')
 })
 
 test('as_local_survives_garbage', () => {

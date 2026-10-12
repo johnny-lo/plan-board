@@ -3,7 +3,21 @@ import { expect, test } from 'claude-code/testing'
 import { sha16 } from '../hooks/checksum.ts'
 import { GUIDE, summary } from '../hooks/guide.ts'
 import { emptyPlan, replay } from '../hooks/replay.ts'
-import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor, repoLabel, repoProgress } from '../hooks/view.ts'
+import {
+  bandCounts,
+  blockedSteps,
+  cardPosition,
+  foldHistory,
+  historyOf,
+  isAnswered,
+  isChatter,
+  isThoughtOnly,
+  itemStates,
+  openCards,
+  recentFor,
+  repoLabel,
+  repoProgress,
+} from '../hooks/view.ts'
 import { entry, logText } from './fixtures.ts'
 import type { Entry, Local } from '../types'
 
@@ -201,21 +215,28 @@ test('summary_keeps_the_raw_assignee', async () => {
   expect(summary(plan, emptyLocal)).toContain(`assigned to ${ulid}`)
 })
 
-test('a_thought_only_card_still_counts_as_waiting', async () => {
-  const plan = await replay(await logText([entry('item.add', { item: item('A') }), card('c1'), card('c2'), card('c3')]))
+test('a_thought_only_card_is_answered_and_the_ai_is_told_to_settle_it', async () => {
+  const plan = await replay(await logText([entry('item.add', { item: item('A') }), card('c1'), card('c2'), card('c3'), card('c4')]))
   const local: Local = {
     ...emptyLocal,
     sent: {
       c1: { draft: 'let me think', at: 1 },
       c2: { choice: 'a', at: 1 },
       c3: { isDismissed: true, at: 1 },
+      c4: { choice: 'a', draft: 'and keep it small', at: 1 },
     },
   }
-  expect(bandCounts(plan, local).waiting).toBe(1)
+  expect(['c1', 'c2', 'c3', 'c4'].map(id => isAnswered(local, id))).toEqual([true, true, true, true])
+  expect(['c1', 'c2', 'c3', 'c4'].map(id => isThoughtOnly(local, id))).toEqual([true, false, false, false])
+  expect(isAnswered(local, 'c5')).toBe(false)
+  expect(isThoughtOnly(local, 'toString')).toBe(false)
+  expect(bandCounts(plan, local).waiting).toBe(0)
   expect(bandCounts(plan, { ...emptyLocal, sent: { c1: { draft: 'x', at: 1 } } }).waiting).toBe(3)
   const told = summary(plan, local)
-  expect(told).toContain('[c1] q-c1 {question} (the user sent a thought only')
+  expect(told).toContain('[c1] q-c1 {question} (the user answered with a thought; settle this card now)')
   expect(told).toContain('[c2] q-c2 {question} (sent, waiting for you to resolve)')
+  // A choice sent with a thought is answered by the choice, as before.
+  expect(told).toContain('[c4] q-c4 {question} (sent, waiting for you to resolve)')
 })
 
 test('guide_asks_before_plan_init_and_links_superpowers_documents', () => {
