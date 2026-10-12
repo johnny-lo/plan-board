@@ -505,3 +505,98 @@
   - 合成的一行按了展開；每一行按了顯示原因，再按收起來。
   - zh-TW 畫面上沒有任何編號：既有測試加上待你處理卡和合成的一行。
 - 文件：README 英文和 zh-TW 兩份的「Items and steps」照本節更新（備註、待你處理卡、新增時一起設定、證據跟著動作、紀錄收合）。
+
+## 16. 跨 repo 的步驟、想法也要結案（2026-10-12 加）
+
+兩件事：
+
+- 使用者在 Orca 用 `C:\Users\j4503\repos` 本身開 session，一個 session 管所有相關的 repo。那個資料夾不是 git repo，外掛已經用本機模式（5.1a）給它一份計畫，所以「計畫放哪裡」不用改，也不需要工作區檔。缺的是：看不出每一步在哪個 repo 做，總表也看不出一件事在各 repo 做到哪。
+- 只送想法的卡一直掛著（13.2 第 1 點的設計）：AI 在對話裡回了，卡片還算「等你決定」。使用者要的是卡片一律被消化，沒回答到就開新卡。
+
+使用者選的：
+
+- repo 標在步驟，不標在項目；項目列從步驟算出各 repo 的進度。
+- 畫面顯示短名；短名由 AI 取、記在計畫裡，使用者要改就跟 AI 說。
+- 送出想法的卡一律由 AI 結案；想法沒回答到問題，就依想法開一張新卡。
+
+本節改動第 3.2、3.3、3.4、4.2、5.3、6.2、13.2、15.2 節。
+
+不做：從 session 自動推出它管哪些 repo（mods API 的 `$.session` 沒有列出 `/add-dir` 目錄的方法）、檢查 repo 資料夾存不存在、工作區檔、項目層的 repo 欄位。
+
+### 16.1 步驟標 repo
+
+- 步驟多一個欄位 `repo?: string`：步驟在哪個 repo 做，寫那個 repo 的資料夾名（例如 `auth-center`、`post_backend_eruncard`）。Orca 的 worktree 路徑（`orca/workspaces/auth-center/…`）裡也是同一個名字。外掛只當它是一段文字，不檢查資料夾。
+- 新的紀錄種類 `step.repo`，`data: { step, repo }`。`repo` 是空字串 = 不標 repo。步驟不存在 → 略過，跟其他 `step.*` 一樣。
+- `step.add` 的 `data` 多一個可選欄位 `repo?`；空字串等於沒給（同 15.3 的 `to`）。
+- `update_step`：
+  - 新的 op `{action: 'repo', step, repo}`。`repo` 先去頭尾空白；空字串 = 不標。
+  - `add` op 多一個可選欄位 `repo`。
+- 兩種模式都能用。給 AI 的說明寫明：session 同時動到好幾個 repo 時才標；只管一個 repo 的計畫不標。
+- 被直接改過的 `step.repo` 行由 AI 自己 `keep` 或 `drop`，不用開卡（跟 `step.note` 一樣）。
+
+### 16.2 短名
+
+- 計畫多一張對照表 `repoNames: Record<資料夾名, 短名>`，從紀錄算出來。
+- 新的紀錄種類 `repo.name`，`data: { repo, name }`。`name` 是空字串 = 拿掉短名，回到顯示資料夾名。
+- `update_step` 新的 op `{action: 'repo_name', repo, name}`，兩個都先去頭尾空白：
+  - `repo` 不能空。
+  - `name` 已經是另一個資料夾的短名 → 拒絕：`short name {name} is already used by {other}`。兩個 repo 同名會分不出來。
+  - 同一次呼叫可以先 `repo_name` 再 `add`／`repo`，順序不限：短名不依賴步驟。
+- 不是項目層的改動：不用使用者點頭，照常記錄原因。它不指到任何項目或步驟，所以不進任何項目的變動紀錄；被直接改過時由 AI 自己 `keep` 或 `drop`。
+- 顯示一律用短名，沒有短名才顯示資料夾名（下面寫成 `{repo}`）。給 AI 的摘要兩個都有。
+- 給 AI 的說明：第一次替某個 repo 標步驟時，同一次呼叫用 `repo_name` 取一個使用者認得的短名（幾個字，例如 `ERC後端`）；之後照摘要裡的名字用，不要另取。
+
+### 16.3 畫面
+
+- **總表的項目列**：項目裡只要有一個步驟標了 repo，就在狀態後面接每個 repo 的「做完/總數」，順序照步驟在項目裡第一次出現的先後；沒標 repo 的步驟不算進去。淡色字。
+
+  ```
+  ▸ ERC 改接 auth-center · 進行中 · auth-center 2/3 · ERC後端 1/4
+  ```
+
+  英文同樣是 `· {repo} {done}/{total}`。太長就換行，不截斷。
+- **展開後的步驟那一行**：有 repo 時，淡色的 `{repo} · ` 放在標題前面，其餘照舊（派給誰、備註、證據在後面）。
+
+  ```
+  ◐ auth-center · 改 token 驗證　派給 Thoth 任務
+  ```
+
+- **卡片的位置那一行**（決定卡、提案卡、待你處理卡）：卡片指到的步驟有 repo 時，在「卡在「{step}」」後面加 `（{repo}）`；英文 `stuck at "{step}" ({repo})`。
+- **變動紀錄**：
+  - `step.add` 的括號尾巴多列 repo：`新增「{step}」到「{item}」（進行中、{repo}）`。
+  - `step.repo`：`「{step}」標成 {repo}`，清掉時 `「{step}」不標 repo`；英文 `Tagged "{step}" with {repo}`、`Untagged "{step}"`。
+  - 紀錄裡的 repo 一律用**現在的**短名。
+  - `step.repo` 算步驟瑣事（15.5）。合成那一行的數量，接在「改派」後面、「連上文件」前面：`改標 repo {n} 個`；英文 `{n} retagged`。
+- **給 AI 的摘要**：步驟那一行加上 `, repo: {資料夾名} ({短名})`，沒有短名就只寫資料夾名。有任何短名時，摘要多一行 `Repo names: {資料夾名} = {短名}, …`。
+- 輸入框上方那一列不變。
+
+### 16.4 想法也要結案
+
+改掉 13.2 第 1 點和 15.2 裡「只送了想法的卡維持可以回答」：
+
+- 只送了想法的卡，跟選了選項一樣變淡：決定卡和提案卡顯示「已送出，等 AI 結案」，待你處理卡顯示「已送出，等 AI 確認」。底下照舊多一行 `你的想法：{draft}`。
+- 它不再算「等你決定」：輸入框上方那一列、分頁的數字、`bandCounts` 都不算它。步驟的 ⚑ 照舊，直到 AI 結案。
+- 送出的時機不變：`blocking` 的決定卡和待你處理卡立刻送；其他照 4.3 暫存、一起送。
+- 送給 AI 的文字（英文）：
+  - 只有想法：`My thoughts on "{question}" [{id}]: {draft}` 後面改成 `(Settle this card now: if this answers it, resolve the card with that outcome; if it does not, resolve it and open a new card that takes the thought into account.)`
+  - 一次送好幾張時，結尾那句改成：`(Close every card here now: resolve_decision, or apply_change for an approved proposal. When a thought does not answer a card, resolve it and open a new card that takes the thought into account.)`
+  - 給 AI 的摘要裡，送了想法還沒結案的卡寫成 `(the user answered with a thought; settle this card now)`。
+- 提案卡只送想法：想法是同意 → `apply_change`，`chat` 帶使用者的話；改了內容或不同意 → 結案，需要的話依想法重新提案（6.2 原本的規則）。
+- 給 AI 的說明加一條：使用者用想法回答的卡，當下就要結案；沒回答到問題，結案後依想法開一張新卡，問題和選項要反映使用者寫的，不要只在對話裡回。
+
+### 16.5 測試與文件
+
+- 單元測試：
+  - `step.repo`：標上、清掉、步驟不存在略過；`add` 帶 `repo` 只寫一筆；空字串等於沒給。
+  - `repo.name`：取名、拿掉、同名拒絕；重算出 `repoNames`。
+  - 項目列的 repo 進度：順序照第一次出現、只算有標的步驟、做完數。
+  - 摘要有 `repo` 和 `Repo names`；顯示用短名、沒短名用資料夾名。
+  - 收合：`step.repo` 算瑣事，「改標 repo」的文字（兩種語言）。
+  - 舊格式（沒有新欄位）的 log 重算出的計畫跟現在一樣。
+  - 只有想法的訊息文字、一次送好幾張的結尾句。
+- 外掛測試，terminal 和 desktop 都跑：
+  - 步驟那一行有短名；項目列有各 repo 進度；卡片位置那一行有 repo。
+  - 只送想法的卡變淡、顯示「已送出，等 AI 結案」和「你的想法：…」，輸入框上方那一列不算它。
+  - zh-TW 畫面上沒有任何編號：既有測試加上 repo 和短名。
+- 舊版外掛：讀到 `step.repo`、`repo.name` 會略過，列在給 AI 的「略過的紀錄」；`step.add` 多出來的 `repo` 會被忽略。外掛更新後就對了。`plugin.json` 的版本改成 `0.3.0`。
+- 文件：README 英文和 zh-TW 兩份的「Items and steps」照本節更新（步驟標 repo 和短名、想法一律結案）；「計畫放在哪裡」加一句：一個 session 管好幾個 repo 時，從這些 repo 的上層資料夾開 session，就是那個資料夾的一份本機計畫。
