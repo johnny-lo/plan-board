@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { sha16 } from '../hooks/checksum.ts'
 import { GUIDE, summary } from '../hooks/guide.ts'
 import { emptyPlan, replay } from '../hooks/replay.ts'
-import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor, repoLabel } from '../hooks/view.ts'
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isChatter, itemStates, openCards, recentFor, repoLabel, repoProgress } from '../hooks/view.ts'
 import { entry, logText } from './fixtures.ts'
 import type { Entry, Local } from '../types'
 
@@ -339,4 +339,49 @@ test('repo_label_is_the_short_name_else_the_folder', async () => {
   expect(repoLabel(plan, 'post_backend_eruncard')).toBe('ERC後端')
   expect(repoLabel(plan, 'auth-center')).toBe('auth-center')
   expect(repoLabel(plan, 'toString')).toBe('toString')
+})
+
+test('repo_progress_follows_first_appearance_and_counts_only_tagged_steps', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.add', { item: item('B') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 's1' }, repo: 'post_backend_eruncard' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 's2' }, repo: 'auth-center' }),
+      step('A', 's3'),
+      entry('step.add', { item: 'A', step: { id: 's4', title: 's4' }, repo: 'auth-center' }),
+      entry('step.repo', { step: 's3', repo: 'post_backend_eruncard' }),
+      step('A', 's5'),
+      status('s2', 'done'),
+      status('s4', 'done'),
+      status('s5', 'done'),
+      step('B', 'b1'),
+    ]),
+  )
+  expect(repoProgress(plan, 'A')).toEqual([
+    { repo: 'post_backend_eruncard', done: 0, total: 2 },
+    { repo: 'auth-center', done: 2, total: 2 },
+  ])
+  expect(repoProgress(plan, 'B')).toEqual([])
+  expect(repoProgress(plan, 'ghost')).toEqual([])
+  expect(isChatter(entry('step.repo', { step: 's1', repo: 'auth-center' }))).toBe(true)
+})
+
+test('repo_progress_follows_a_step_moved_to_another_item', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.add', { item: item('B') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 's1' }, repo: 'auth-center' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 's2' }, repo: 'auth-center' }),
+      entry('step.add', { item: 'B', step: { id: 'b1', title: 'b1' }, repo: 'thoth' }),
+      status('s2', 'done'),
+      entry('step.move', { step: 's2', item: 'B' }),
+    ]),
+  )
+  expect(repoProgress(plan, 'A')).toEqual([{ repo: 'auth-center', done: 0, total: 1 }])
+  expect(repoProgress(plan, 'B')).toEqual([
+    { repo: 'thoth', done: 0, total: 1 },
+    { repo: 'auth-center', done: 1, total: 1 },
+  ])
 })

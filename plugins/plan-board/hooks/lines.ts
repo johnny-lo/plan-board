@@ -90,10 +90,11 @@ export function changeLine(change: Change, plan: Plan, lang: Lang, previous?: st
     case 'item.reorder':
       return `${t(lang, 'kindItem')} ${t(lang, 'itemReorder')}`
     case 'step.add': {
-      const { step, item, status, to } = change.data
+      const { step, item, status, to, repo } = change.data
       const how: string[] = []
       if (status === 'doing' || status === 'done') how.push(t(lang, status === 'done' ? 'stepDone' : 'stepDoing'))
       if (to !== undefined && to !== '') how.push(assignedText(to, lang))
+      if (repo !== undefined && repo !== '') how.push(repoLabel(plan, repo))
       const tail = how.length === 0 ? '' : lang === 'zh-TW' ? `（${how.join('、')}）` : ` (${how.join(', ')})`
       return `${t(lang, 'kindStep')} ${t(lang, 'stepAdd', { step: step.title, item: name(item) })}${tail}`
     }
@@ -162,7 +163,7 @@ export function historyLines(entry: Entry, plan: Plan, lang: Lang): string[] {
 }
 
 /** The label each kind of step chatter is counted under, in the order a folded row lists them. */
-const FOLD: Key[] = ['foldAdded', 'foldDone', 'foldStarted', 'foldBack', 'foldRenamed', 'foldRemoved', 'foldMoved', 'foldReassigned', 'foldLinked']
+const FOLD: Key[] = ['foldAdded', 'foldDone', 'foldStarted', 'foldBack', 'foldRenamed', 'foldRemoved', 'foldMoved', 'foldReassigned', 'foldRetagged', 'foldLinked']
 
 function foldKeyOf(entry: Entry): Key {
   switch (entry.kind) {
@@ -178,7 +179,12 @@ function foldKeyOf(entry: Entry): Key {
       return 'foldMoved'
     case 'step.assign':
       return 'foldReassigned'
+    case 'step.repo':
+      return 'foldRetagged'
+    case 'item.link':
+      return 'foldLinked'
     default:
+      // Only chatter is folded (isChatter); a kind listed there must have its own case above.
       return 'foldLinked'
   }
 }

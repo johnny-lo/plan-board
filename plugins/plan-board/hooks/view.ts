@@ -61,12 +61,27 @@ export function repoLabel(plan: Plan, repo: string): string {
   return Object.hasOwn(plan.repoNames, repo) ? plan.repoNames[repo] : repo
 }
 
+/** Each repo the item's steps are tagged with, in the order a step first names it: how many of its steps are done, of how many. Untagged steps count for none. */
+export function repoProgress(plan: Plan, itemId: string): { repo: string; done: number; total: number }[] {
+  if (!Object.hasOwn(plan.items, itemId)) return []
+  const tally = new Map<string, { repo: string; done: number; total: number }>()
+  for (const stepId of plan.items[itemId].steps) {
+    const repo = plan.steps[stepId]?.repo
+    if (repo === undefined) continue
+    const row = tally.get(repo) ?? { repo, done: 0, total: 0 }
+    row.total += 1
+    if (plan.steps[stepId].status === 'done') row.done += 1
+    tally.set(repo, row)
+  }
+  return [...tally.values()]
+}
+
 export function historyOf(plan: Plan, itemId: string): Entry[] {
   return [...(plan.itemLog[itemId] ?? [])].reverse()
 }
 
-/** Step-level chatter, folded in the history; step.note never reaches the history at all. */
-const CHATTER: ReadonlySet<string> = new Set(['step.add', 'step.edit', 'step.remove', 'step.move', 'step.assign', 'step.status', 'item.link'])
+/** Step-level chatter, folded in the history; step.note and repo.name never reach the history at all. */
+const CHATTER: ReadonlySet<string> = new Set(['step.add', 'step.edit', 'step.remove', 'step.move', 'step.assign', 'step.status', 'step.repo', 'item.link'])
 
 export const isChatter = (entry: Entry): boolean => CHATTER.has(entry.kind)
 

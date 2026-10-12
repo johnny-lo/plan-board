@@ -3,7 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import { t } from './i18n.ts'
 import type { Key, Lang } from './i18n.ts'
 import { assignedText, changeLine, fit, foldText, historyLines, stamp, textWidth } from './lines.ts'
-import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, itemStates, openCards, recentFor } from './view.ts'
+import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, itemStates, openCards, recentFor, repoLabel, repoProgress } from './view.ts'
 import type { Row } from './view.ts'
 import type { Card, Entry, ItemState, Local, Plan, Step } from '../types'
 
@@ -44,9 +44,9 @@ function whereText(current: Plan, card: Card, lang: Lang): string {
   const where = cardPosition(current, card)
   if (where.item === undefined) return t(lang, 'posOther')
   const n = where.index ?? 0
-  return where.step === undefined
-    ? t(lang, 'posItem', { item: where.item.title, n })
-    : t(lang, 'posStep', { item: where.item.title, n, step: where.step.title })
+  if (where.step === undefined) return t(lang, 'posItem', { item: where.item.title, n })
+  const vars = { item: where.item.title, n, step: where.step.title }
+  return where.step.repo === undefined ? t(lang, 'posStep', vars) : t(lang, 'posStepRepo', { ...vars, repo: repoLabel(current, where.step.repo) })
 }
 
 /** The label a staged pick is shown under: proposals and skips have words of their own. */
@@ -121,9 +121,25 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
           const isOpen = mine.expanded.includes(id)
           const hasBlocked = item.steps.some(stepId => blocked.has(stepId))
           const label = `${isOpen ? '▾' : '▸'} ${item.title} · ${t(lang, STATE_KEY[states[id]])}${hasBlocked ? ' ⚑' : ''}`
+          // How far each repo is, dimmed after the state; it wraps rather than being cut.
+          const progress = repoProgress(current, id)
+            .map(row => `· ${repoLabel(current, row.repo)} ${row.done}/${row.total}`)
+            .join(' ')
+          const itemButton = <Button key={`item:${id}`} plain label={label} onPress={() => actions.toggle(id)} />
           return (
             <Box key={`box:item:${id}`} flexDirection="column">
-              <Button key={`item:${id}`} plain label={label} onPress={() => actions.toggle(id)} />
+              {progress === '' ? (
+                itemButton
+              ) : (
+                <Box flexDirection="row" gap={1}>
+                  {itemButton}
+                  <Box flexShrink={1}>
+                    <Text dimColor wrap="wrap">
+                      {progress}
+                    </Text>
+                  </Box>
+                </Box>
+              )}
               {isOpen && (
                 <Box flexDirection="column" paddingLeft={2}>
                   <Text wrap="wrap">{t(lang, 'goal', { goal: item.goal })}</Text>
@@ -141,9 +157,18 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
                         waiting === undefined
                           ? evidenceOf(step, lang)
                           : t(lang, waiting.type === 'action' ? 'waitingAction' : 'blockedBy', { question: waiting.question })
+                      const mark = markOf(step, waiting !== undefined, lang)
                       return (
                         <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
-                          <Text>{`${markOf(step, waiting !== undefined, lang)} ${step.title}`}</Text>
+                          {step.repo === undefined ? (
+                            <Text>{`${mark} ${step.title}`}</Text>
+                          ) : (
+                            <Box flexDirection="row" gap={1}>
+                              <Text>{mark}</Text>
+                              <Text dimColor>{`${repoLabel(current, step.repo)} ·`}</Text>
+                              <Text>{step.title}</Text>
+                            </Box>
+                          )}
                           {step.assignee !== undefined && <Text dimColor>{assignedText(step.assignee, lang)}</Text>}
                           {step.note !== undefined && <Text dimColor>{step.note}</Text>}
                           {note !== '' && <Text dimColor>{note}</Text>}

@@ -77,6 +77,14 @@ const addAction = async ($: Engine, extra: Record<string, unknown> = {}) => {
 /** Repo folder names, as the AI tags steps with them; neither has 8 hex characters in a row, so ID does not take them for ids. */
 const ERC = 'post_backend_eruncard'
 const AUTH = 'auth-center'
+/** The board with S1 done in auth-center, S2 in progress in ERC (shown as ERC後端) and S3 to do in auth-center. */
+const tagged = () => [
+  ...board(),
+  entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+  entry('step.repo', { step: S1, repo: AUTH }),
+  entry('step.repo', { step: S2, repo: ERC }),
+  entry('step.add', { item: B, step: { id: S3, title: '改 token 驗證' }, repo: AUTH }),
+]
 
 async function start($: Engine, on: Parameters<typeof world>[0], entries: ReturnType<typeof entry>[] | null, extra = ''): Promise<World> {
   const w = world(on, entries === null ? {} : { [LOG]: (await logText(entries)) + extra })
@@ -438,6 +446,10 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     entry('step.edit', { step: S3, title: '輸入框上方一列文字' }),
     entry('step.move', { step: S3, item: C }),
     entry('step.move', { step: S3, item: B }),
+    entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+    entry('step.repo', { step: S2, repo: ERC }),
+    entry('step.repo', { step: S0, repo: AUTH }),
+    entry('step.add', { item: B, step: { id: '55555555', title: '改 token 驗證' }, repo: AUTH }),
     entry('card.open', {
       card: { id: '5a5a5a5a', type: 'action', item: B, step: S2, question: ACTION, why: '新的檢查要人核准', options: [], command: 'thoth checks approve' },
     }),
@@ -471,6 +483,8 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     for (const id of items) await ui.press({ key: `item:${id}` })
     for (const found of await ui.findAll({ type: 'Button', text: /▸ 步驟：/ })) await ui.press({ key: found.key as string })
     seen.push(...(await texts(ui)))
+    expect(seen).toContain('· auth-center 1/1')
+    expect(seen).toContain('· ERC後端 0/1 · auth-center 0/1')
     expect(seen.some(text => text.includes('── 變動紀錄 ──'))).toBe(true)
     expect(seen.some(text => text.includes('你在「要不要先做決定看板？」選了同意'))).toBe(true)
     expect(seen.some(text => text.includes('你在對話裡說：「照你的建議」'))).toBe(true)
@@ -478,6 +492,7 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     // The first card is open already; the others open on a press.
     for (const id of cards.slice(1)) await ui.press({ key: `card:${id}` })
     const cardTexts = await texts(ui)
+    expect(cardTexts).toContain('決定看板 v1 · 第 2 項 · 卡在「窗格兩個畫面」（ERC後端）')
     seen.push(...cardTexts)
     expect(cardTexts.filter(text => text.startsWith('為什麼現在問：'))).toHaveLength(3)
     expect(cardTexts.some(text => text.includes('之前：'))).toBe(true)
@@ -769,6 +784,7 @@ test('i18n_tables_have_the_same_keys', () => {
     '做好了', '為什麼：{why}', '指令：{command}', '已送出，等 AI 確認', '等你處理：{question}', '請你「{question}」',
     '步驟：{counts}', '新增 {n} 個', '做完 {n} 個', '開始 {n} 個', '改回還沒開始 {n} 個', '改名 {n} 個', '刪掉 {n} 個', '移動 {n} 個', '改派 {n} 個', '連上文件 {n} 個',
     '「{step}」標成 {repo}', '「{step}」不標 repo', 'repo', '{repo} 顯示成「{name}」', '{repo} 改回顯示資料夾名',
+    '{item} · 第 {n} 項 · 卡在「{step}」（{repo}）', '改標 repo {n} 個',
   ]
   const values = new Set(zh.map(key => t('zh-TW', key as never)))
   // t fills slots it has values for; unfilled ones stay as written.
@@ -939,6 +955,91 @@ test('step_repo_and_repo_name_lines_in_both_languages', async () => {
   for (const e of plan.applied.slice(2)) expect(historyLines(e, plan, 'zh-TW')[0]).not.toMatch(ID)
 })
 
+test('repos_show_by_short_name_on_items_steps_and_cards', ZH, async ($, on) => {
+  const entries = [...tagged(), blockedOnS2()]
+  const w = await start($, on, entries)
+  const fold = `fold:${B}:${entries[3].id}`
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    // Each repo's done/total after the state, in the order the item's steps first name it; an item with no tagged step shows none.
+    expect(await ui.find({ type: 'Button', text: '▸ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '· auth-center 1/2 · ERC後端 0/1' })).toBeDefined()
+    expect((await texts(ui)).filter(text => text.startsWith('· '))).toHaveLength(1)
+
+    // A tagged step: its mark, the repo dimmed, then its title.
+    await ui.press({ key: `item:${B}` })
+    expect(await ui.find({ type: 'Text', text: '⚑' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'ERC後端 ·' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '窗格兩個畫面' })).toBeDefined()
+    expect((await texts(ui)).filter(text => text === 'auth-center ·')).toHaveLength(2)
+    expect(await ui.find({ type: 'Text', text: '改 token 驗證' })).toBeDefined()
+
+    // Retags are step chatter; inside the fold, a tag and an add name the repo by its short name.
+    expect((await ui.find({ type: 'Button', key: fold }))?.text).toMatch(/▸ 步驟：新增 3 個、做完 1 個、開始 1 個、改標 repo 2 個$/)
+    await ui.press({ key: fold })
+    expect(await ui.find({ type: 'Button', text: /步驟 「窗格兩個畫面」標成 ERC後端$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /步驟 新增「改 token 驗證」到「決定看板 v1」（auth-center）$/ })).toBeDefined()
+
+    await ui.press({ key: 'view:cards' })
+    expect(await ui.find({ type: 'Text', text: '決定看板 v1 · 第 1 項 · 卡在「窗格兩個畫面」（ERC後端）' })).toBeDefined()
+    await ui.unmount()
+  }
+  expect(t('en', 'posStepRepo' as never, { item: 'Board', n: 1, step: 'Format', repo: 'ERC backend' })).toBe('Board · item 1 · stuck at "Format" (ERC backend)')
+})
+
+test('a_new_or_dropped_short_name_shows_everywhere_at_once', ZH, async ($, on) => {
+  const entries = tagged()
+  const w = await start($, on, entries)
+  const rename = (name: string) => $.tool.call({ tool: tool('update_step'), why: '換個好認的名字', ops: [{ action: 'repo_name', repo: ERC, name }] })
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    // Naming a repo again with the name it has is no clash.
+    expect((await rename('ERC後端')).deny).toBeUndefined()
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `fold:${B}:${entries[3].id}` })
+    expect(await ui.find({ type: 'Text', text: 'ERC後端 ·' })).toBeDefined()
+
+    await rename('ERC主程式')
+    expect(await ui.find({ type: 'Text', text: '· auth-center 1/2 · ERC主程式 0/1' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'ERC主程式 ·' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /步驟 「窗格兩個畫面」標成 ERC主程式$/ })).toBeDefined()
+    expect((await texts(ui)).some(text => text.includes('ERC後端'))).toBe(false)
+
+    await rename('')
+    expect(await ui.find({ type: 'Text', text: `· auth-center 1/2 · ${ERC} 0/1` })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: `${ERC} ·` })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: new RegExp(`步驟 「窗格兩個畫面」標成 ${ERC}$`) })).toBeDefined()
+    expect((await texts(ui)).some(text => text.includes('ERC主程式'))).toBe(false)
+    await ui.unmount()
+  }
+})
+
+test('history_names_a_repo_by_its_current_short_name', async () => {
+  const entries = [
+    entry('item.add', { item: item(A, '看板', 'g') }),
+    entry('repo.name', { repo: ERC, name: 'ERC後端' }),
+    entry('step.add', { item: A, step: { id: S1, title: '審查' }, status: 'doing', to: 'claude-b', repo: ERC }),
+    entry('step.add', { item: A, step: { id: S2, title: '定格式' }, repo: '' }),
+    entry('step.repo', { step: S2, repo: ERC }),
+  ]
+  const named = await replay(await logText(entries))
+  const [added, plain, retag] = named.applied.slice(2)
+  expect(changeLine(added, named, 'zh-TW')).toBe('步驟 新增「審查」到「看板」（進行中、派給 claude-b、ERC後端）')
+  expect(changeLine(added, named, 'en')).toBe('Step added "審查" to "看板" (in progress, assigned to claude-b, ERC後端)')
+  expect(changeLine(plain, named, 'zh-TW')).toBe('步驟 新增「定格式」到「看板」')
+  expect(changeLine(retag, named, 'zh-TW')).toBe('步驟 「定格式」標成 ERC後端')
+
+  // A later name, or none, changes every line that names the repo, the lines written before it too.
+  const renamed = await replay(await logText([...entries, entry('repo.name', { repo: ERC, name: 'ERC主程式' })]))
+  expect(changeLine(added, renamed, 'zh-TW')).toBe('步驟 新增「審查」到「看板」（進行中、派給 claude-b、ERC主程式）')
+  expect(changeLine(retag, renamed, 'zh-TW')).toBe('步驟 「定格式」標成 ERC主程式')
+  const dropped = await replay(await logText([...entries, entry('repo.name', { repo: ERC, name: '' })]))
+  expect(changeLine(added, dropped, 'zh-TW')).toBe(`步驟 新增「審查」到「看板」（進行中、派給 claude-b、${ERC}）`)
+  expect(changeLine(retag, dropped, 'en')).toBe(`Step tagged "定格式" with ${ERC}`)
+})
+
 test('fold_text_counts_each_kind_in_both_languages', async () => {
   const plan = await replay(
     await logText([
@@ -951,13 +1052,14 @@ test('fold_text_counts_each_kind_in_both_languages', async () => {
       entry('step.edit', { step: S2, title: '二 v2' }),
       entry('step.assign', { step: S2, to: 'claude-b' }),
       entry('step.move', { step: S2, item: A }),
+      entry('step.repo', { step: S2, repo: AUTH }),
       entry('item.link', { item: A, doc: PLAN }),
       entry('step.remove', { step: S2 }),
     ]),
   )
   const chatter = plan.applied.slice(1)
-  expect(foldText(chatter, 'zh-TW')).toBe('步驟：新增 2 個、做完 1 個、開始 1 個、改回還沒開始 1 個、改名 1 個、刪掉 1 個、移動 1 個、改派 1 個、連上文件 1 個')
-  expect(foldText(chatter, 'en')).toBe('Steps: 2 added, 1 done, 1 started, 1 back to not started, 1 renamed, 1 removed, 1 moved, 1 reassigned, 1 docs linked')
+  expect(foldText(chatter, 'zh-TW')).toBe('步驟：新增 2 個、做完 1 個、開始 1 個、改回還沒開始 1 個、改名 1 個、刪掉 1 個、移動 1 個、改派 1 個、改標 repo 1 個、連上文件 1 個')
+  expect(foldText(chatter, 'en')).toBe('Steps: 2 added, 1 done, 1 started, 1 back to not started, 1 renamed, 1 removed, 1 moved, 1 reassigned, 1 retagged, 1 docs linked')
   expect(foldText(chatter.slice(0, 3), 'en')).toBe('Steps: 2 added, 1 started')
 })
 
