@@ -406,3 +406,14 @@ test('repo_progress_follows_a_step_moved_to_another_item', async () => {
     { repo: 'auth-center', done: 1, total: 1 },
   ])
 })
+
+test('guide_covers_repos_short_names_and_settling_thoughts', () => {
+  expect(GUIDE).toContain('action repo,')
+  expect(GUIDE).toContain('repo on the add op')
+  expect(GUIDE).toContain('one repo only')
+  expect(GUIDE).toContain('action repo_name')
+  expect(GUIDE).toContain('Repo names line')
+  expect(GUIDE).toContain('answered with a thought is settled now')
+  expect(GUIDE).toContain('open a new card')
+  expect(GUIDE).toContain("apply_change with the user's words as chat")
+})
