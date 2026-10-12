@@ -115,7 +115,7 @@ export type Pick = { choice?: string; draft?: string; isDismissed?: boolean; at:
 export type Local = { staged: Record<string, Pick>; sent: Record<string, Pick>; expanded: string[]; view: 'overview' | 'cards' }
 ```
 
-- [ ] **Step 1: 建骨架**
+- [x] **Step 1: 建骨架**
 
 照 Thoth 的 `plugins/thoth` 建出同樣的結構：
 - `plugin.json`：`name: "plan-board"`、`version: "0.1.0"`、`description`、`author`、`types: "./types/index.d.ts"`，`userConfig.language` 照 Thoth 的寫法，但 `title` 寫 `"Language"`。
@@ -126,7 +126,7 @@ export type Local = { staged: Record<string, Pick>; sent: Record<string, Pick>; 
 - 兩份授權檔：從 Thoth 根目錄複製，著作權人改成 `plan-board contributors`。
 - `.gitignore`：已經有一行 `.agent/`（Thoth 用的，保留），再加一行 `plugins/plan-board/.claude-plugin/types/`。
 
-- [ ] **Step 2: 寫會失敗的測試** `tests/checksum.test.ts`
+- [x] **Step 2: 寫會失敗的測試** `tests/checksum.test.ts`
 
 ```ts
 const E: Entry = { id: '000000000001', at: '2026-10-07T07:20:31.000Z', kind: 'item.add', why: 'start',
@@ -138,13 +138,13 @@ test('check_flags_edits')                  // line.replace('決定看板','決�
 test('check_ignores_trailing_cr')          // checkLine(line + '\r') → isSealed true, hash === (await checkLine(line)).hash
 ```
 
-- [ ] **Step 3: 執行，確認失敗**：`claude plugin test plugins/plan-board`，預期因為 `checksum.ts` 不存在而失敗。
+- [x] **Step 3: 執行，確認失敗**：`claude plugin test plugins/plan-board`，預期因為 `checksum.ts` 不存在而失敗。
 
-- [ ] **Step 4: 實作 `hooks/checksum.ts`**：`sealEntry` 依固定順序組出新物件再 stringify；`checkLine` 先去掉結尾的 `\r`，解析後取出 `sum`，把其餘欄位依解析出來的順序 stringify，再比對。
+- [x] **Step 4: 實作 `hooks/checksum.ts`**：`sealEntry` 依固定順序組出新物件再 stringify；`checkLine` 先去掉結尾的 `\r`，解析後取出 `sum`，把其餘欄位依解析出來的順序 stringify，再比對。
 
-- [ ] **Step 5: 執行測試和兩個 validate**，全部通過。
+- [x] **Step 5: 執行測試和兩個 validate**，全部通過。
 
-- [ ] **Step 6: Commit**：`git add -A && git commit -m "feat: plan-board skeleton, types and line checksum"`（訊息最後一行照 Global Constraints）。
+- [x] **Step 6: Commit**：`git add -A && git commit -m "feat: plan-board skeleton, types and line checksum"`（訊息最後一行照 Global Constraints）。
 
 ---
 
@@ -179,7 +179,7 @@ test('check_ignores_trailing_cr')          // checkLine(line + '\r') → isSeale
 
 `replay`：把 `\uFEFF` 開頭去掉，用 `/\r?\n/` 切行，略過空行，每行跑 `checkLine`，再依 `id` 去重（留第一個），依 `(at, id)` 排序，逐筆 `applyEntry`。套用成功的放進 `applied` 和 `itemLog`，也更新 `names`；略過的放進 `skipped`。這個 task 先把沒通過檢查碼的行全部丟掉，Task 3 再改成標記。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 ```ts
 test('adds_items_in_order_with_before')    // add A, add B, add C before A → order [C, A, B]
@@ -197,10 +197,10 @@ test('names_keep_removed_titles')          // after item.remove A, names[A] === 
 test('crlf_and_bom_are_not_edits')         // '\uFEFF' + text.replace(/\n/g,'\r\n') → same order/items/steps as text
 ```
 
-- [ ] **Step 2: 執行，確認失敗。**
-- [ ] **Step 3: 實作 `replay.ts`。**
-- [ ] **Step 4: 執行，確認通過。**
-- [ ] **Step 5: Commit**：`feat: replay items and steps from the log`。
+- [x] **Step 2: 執行，確認失敗。**
+- [x] **Step 3: 實作 `replay.ts`。**
+- [x] **Step 4: 執行，確認通過。**
+- [x] **Step 5: Commit**：`feat: replay items and steps from the log`。
 
 ---
 
@@ -222,7 +222,7 @@ test('crlf_and_bom_are_not_edits')         // '\uFEFF' + text.replace(/\n/g,'\r\
   1. 先從所有通過檢查碼的 `edit.keep`／`edit.drop` 收集 `keep` 和 `drop` 兩組雜湊。
   2. 再分類每一行：通過檢查碼的照常參與；沒通過、雜湊在 `drop` 裡的整行忽略；沒通過、雜湊在 `keep` 裡、而且解析得了的，照常參與；其餘放進 `flagged`。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 ```ts
 test('cards_open_and_resolve')               // open question card on A → cards[c].resolved undefined, itemLog[A] has it;
@@ -232,10 +232,10 @@ test('edit_keep_lets_a_line_count')          // + sealed edit.keep {lines:[hash 
 test('edit_drop_hides_a_line_for_good')      // + sealed edit.drop {lines:[hash]} → flagged [], no B
 ```
 
-- [ ] **Step 2: 執行，確認失敗。**
-- [ ] **Step 3: 實作。**
-- [ ] **Step 4: 執行，確認通過。**
-- [ ] **Step 5: Commit**：`feat: cards and directly edited lines in replay`。
+- [x] **Step 2: 執行，確認失敗。**
+- [x] **Step 3: 實作。**
+- [x] **Step 4: 執行，確認通過。**
+- [x] **Step 5: Commit**：`feat: cards and directly edited lines in replay`。
 
 ---
 
@@ -286,7 +286,7 @@ Skipped entries:
 
 只有狀態是 `in progress` 和 `next` 的項目才列出步驟。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 ```ts
 test('item_states')                  // A(done,done) B(done,todo) C(todo) D(no steps) E(todo) → {A:'done',B:'doing',C:'next',D:'later',E:'later'}
@@ -303,10 +303,10 @@ test('guide_names_every_tool')       // GUIDE contains propose_change, apply_cha
 
 （`emptyLocal` 在 Task 6 才有；這裡先在測試裡直接寫 `{staged:{},sent:{},expanded:[],view:'overview'}`。）
 
-- [ ] **Step 2: 執行，確認失敗。**
-- [ ] **Step 3: 實作兩個檔案。**
-- [ ] **Step 4: 執行，確認通過。**
-- [ ] **Step 5: Commit**：`feat: derived view, guide and summary for the model`。
+- [x] **Step 2: 執行，確認失敗。**
+- [x] **Step 3: 實作兩個檔案。**
+- [x] **Step 4: 執行，確認通過。**
+- [x] **Step 5: Commit**：`feat: derived view, guide and summary for the model`。
 
 ---
 
@@ -346,7 +346,7 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
 | `resolve_decision` | `card`、`outcome` | 一筆 `card.resolve`，`why = outcome` |
 | `resolve_direct_edit` | `action`（`keep`／`drop`）、`summary`、`card?` | 目前沒有被標記的行就回傳錯誤。`keep` 時，只要有被標記的行解析得出 `item.*`，就一定要帶一張存在而且已結案的卡，否則回傳含 `card` 的錯誤。寫一筆 `edit.keep` 或 `edit.drop`，`lines` 是所有被標記行的雜湊，`basis = {type:'direct-edit'}`。`drop` 時把同一組雜湊放進 `drop` |
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 ```ts
 test('propose_change_opens_a_proposal_card')     // item.add without id → filled 8-hex id; one card.open type 'proposal';
@@ -363,10 +363,10 @@ test('resolve_direct_edit_rules')                // nothing flagged → error; k
 test('schemas_list_required_fields')             // TOOLS.add_decision.inputSchema.required includes 'question','why','options'
 ```
 
-- [ ] **Step 2: 執行，確認失敗。**
-- [ ] **Step 3: 實作。**
-- [ ] **Step 4: 執行，確認通過。**
-- [ ] **Step 5: Commit**：`feat: tool validation and entries`。
+- [x] **Step 2: 執行，確認失敗。**
+- [x] **Step 3: 實作。**
+- [x] **Step 4: 執行，確認通過。**
+- [x] **Step 5: Commit**：`feat: tool validation and entries`。
 
 ---
 
@@ -403,7 +403,7 @@ Decisions from the pane (<n>):
 
 `blockingMessage` 在有 `choice` 時回傳 `Decision made for "<question>" [<id>]: <choice 或上面提案卡／略過的寫法>`；只有想法時回傳 `My thoughts on "<question>" [<id>]: <draft>` 加一行 `(If this settles it, resolve the card; otherwise reply and keep it open.)`。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 ```ts
 test('stage_toggle_draft_dismiss_clear')   // choice twice → unstaged; draft '  要看記憶體上限 ' → '要看記憶體上限'; draft '' drops it; clear drops all
@@ -415,10 +415,10 @@ test('blocking_message_text')              // 'Decision made for "Install where?
 test('as_local_survives_garbage')          // asLocal(undefined), asLocal(42) → emptyLocal()
 ```
 
-- [ ] **Step 2: 執行，確認失敗。**
-- [ ] **Step 3: 實作。**
-- [ ] **Step 4: 執行，確認通過。**
-- [ ] **Step 5: Commit**：`feat: local pane state and messages to the model`。
+- [x] **Step 2: 執行，確認失敗。**
+- [x] **Step 3: 實作。**
+- [x] **Step 4: 執行，確認通過。**
+- [x] **Step 5: Commit**：`feat: local pane state and messages to the model`。
 
 ---
 
@@ -451,7 +451,7 @@ test('as_local_survives_garbage')          // asLocal(undefined), asLocal(42) �
 - `prompt.compose`：在原本的 sections 後面加一段 `{ id: 'plan-board:guide', text: GUIDE + '\n\n' + summary(plan, local), scope: 'session' }`，寫法和舊 decisions mod 一樣。
 - `command.run`（`plan`）：`refresh`，打開窗格（id `plan-board`），回傳一句話。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 ```ts
 test('first_proposal_creates_log_and_gitattributes') // no files → propose_change → files['/repo/plan/log.jsonl'] one sealed line;
@@ -467,10 +467,10 @@ test('concurrent_write_retries_then_fails')          // w.statBump = true → de
 test('prompt_submit_picks_up_pulled_lines')          // write a sealed line into w.files directly, submit a prompt → summary contains its item
 ```
 
-- [ ] **Step 2: 執行，確認失敗。**
-- [ ] **Step 3: 實作 `logfile.ts` 和接線。**
-- [ ] **Step 4: 執行測試和兩個 validate，全部通過。**
-- [ ] **Step 5: Commit**：`feat: log writing and plugin wiring`。
+- [x] **Step 2: 執行，確認失敗。**
+- [x] **Step 3: 實作 `logfile.ts` 和接線。**
+- [x] **Step 4: 執行測試和兩個 validate，全部通過。**
+- [x] **Step 5: Commit**：`feat: log writing and plugin wiring`。
 
 ---
 
@@ -514,7 +514,7 @@ zh-TW 的固定文字（spec 4）。英文版自己寫對應的句子，測試�
   - 每次改 local 都要寫回 `$.store`（`localKey(root)`），並更新 atom。
 - **輸入框上方一列**：`hasSurvey` 為真，或計畫是空的而且沒有未結案的卡，就交給 `next(e)`。否則顯示一列文字和 key 為 `open` 的按鈕，有被標記的行時在文字後面加上警告。寬度用 `fit`／`textWidth` 處理，寫法照 Thoth。
 
-- [ ] **Step 1: 寫會失敗的測試**（都用 `{ options: { language: 'zh-TW' } }`，terminal 和 desktop 兩種畫面各跑一次）
+- [x] **Step 1: 寫會失敗的測試**（都用 `{ options: { language: 'zh-TW' } }`，terminal 和 desktop 兩種畫面各跑一次）
 
 ```ts
 test('overview_shows_states_and_expands_item') // '▸ 設定精靈 · 下一個'; press item:<A> → '做完的樣子：…', '✓ 定檔案格式', 'Thoth pass', a line starting '原因：'
@@ -532,10 +532,10 @@ test('no_ids_in_zh_tw_text')                    // findAll Text+Button in both v
 test('i18n_tables_have_the_same_keys')
 ```
 
-- [ ] **Step 2: 執行，確認失敗。**
-- [ ] **Step 3: 實作。**
-- [ ] **Step 4: 執行測試和兩個 validate，全部通過。**
-- [ ] **Step 5: Commit**：`feat: pane, band and sending decisions`。
+- [x] **Step 2: 執行，確認失敗。**
+- [x] **Step 3: 實作。**
+- [x] **Step 4: 執行測試和兩個 validate，全部通過。**
+- [x] **Step 5: Commit**：`feat: pane, band and sending decisions`。
 
 ---
 
@@ -547,7 +547,7 @@ test('i18n_tables_have_the_same_keys')
 **Interfaces:**
 - Consumes: `nextText`（`logfile.ts`）、`replay`（`replay.ts`）、`Entry`。用 `../plugins/plan-board/hooks/<名稱>.ts` 引用。
 
-- [ ] **Step 1: 寫測試** `tests-git/merge.test.ts`（`node:test`、`node:assert/strict`、`node:child_process`、`node:fs`、`node:os`、`node:path`）：
+- [x] **Step 1: 寫測試** `tests-git/merge.test.ts`（`node:test`、`node:assert/strict`、`node:child_process`、`node:fs`、`node:os`、`node:path`）：
   1. 在 `mkdtempSync(join(tmpdir(), 'plan-board-'))` 建 repo：`git init -b main`，每個 git 指令都帶 `-c user.name=t -c user.email=t@t`。
   2. 寫入 `.gitattributes`（就是 Global Constraints 裡那一行），用 `nextText('', [add A], [])` 寫出 `plan/log.jsonl`，commit。
   3. 開分支 `a`，用 `nextText` 加上 `add B`，commit。
@@ -556,9 +556,9 @@ test('i18n_tables_have_the_same_keys')
   - 檢查：merge 的結束碼是 0；檔案裡沒有 `<<<<<<<`；`replay` 之後 `flagged` 是 `[]`，`order` 等於 `[A, B, C]`。
   - 第二個測試：把 `core.autocrlf` 設成 `true`，重新 checkout 之後（`git rm --cached -r . && git reset --hard`）再 `replay`，`flagged` 仍是 `[]`。
 
-- [ ] **Step 2: 執行** `node --test tests-git/merge.test.ts`，預期 `fail 0`。如果有任何失敗，修的是 `replay.ts` 或 `logfile.ts`，不是測試。
+- [x] **Step 2: 執行** `node --test tests-git/merge.test.ts`，預期 `fail 0`。如果有任何失敗，修的是 `replay.ts` 或 `logfile.ts`，不是測試。
 
-- [ ] **Step 3: 寫 README**：英文和 zh-TW 各一份，內容一樣。寫這幾件事：
+- [x] **Step 3: 寫 README**：英文和 zh-TW 各一份，內容一樣。寫這幾件事：
   - 它是什麼：一句話。
   - 安裝：`/plugin marketplace add johnny-lo/plan-board`，再 `/plugin install plan-board@plan-board`。
   - 怎麼設定語言。
@@ -567,8 +567,8 @@ test('i18n_tables_have_the_same_keys')
   - 和 Thoth 的關係：可以一起用，但外掛不讀 Thoth。
   - 授權。
 
-- [ ] **Step 4: 從頭跑一次全部的驗證指令**（Global Constraints 裡的三個），全部通過。
-- [ ] **Step 5: Commit**：`test: real git union merge; docs: README`。
+- [x] **Step 4: 從頭跑一次全部的驗證指令**（Global Constraints 裡的三個），全部通過。
+- [x] **Step 5: Commit**：`test: real git union merge; docs: README`。
 
 ---
 
@@ -2568,7 +2568,7 @@ git commit -m "docs(plan-board): guide, README and 0.2.0 for notes, action cards
 - Produces: `Step.repo?: string`；`Plan.repoNames: Record<string, string>`（沒有 prototype，跟 `names` 一樣）；紀錄種類 `{ kind: 'step.repo'; data: { step: string; repo: string } }` 和型別 `RepoChange = { kind: 'repo.name'; data: { repo: string; name: string } }`；`step.add` 的 `data.repo?: string`；`update_step` 的 op `{ action: 'repo', step, repo }`、`{ action: 'repo_name', repo, name }`，`add` op 多一個 `repo`；`repoLabel(plan: Plan, repo: string): string`（`view.ts`）；i18n 鍵 `stepTag`、`stepUntag`、`kindRepo`、`repoName`、`repoUnname`；`tests/pane.test.ts` 的常數 `ERC`、`AUTH`。
 - Consumes: 無。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 `tests/replay.test.ts` 最後加：
 
@@ -2825,12 +2825,12 @@ test('step_repo_and_repo_name_lines_in_both_languages', async () => {
     '「{step}」標成 {repo}', '「{step}」不標 repo', 'repo', '{repo} 顯示成「{name}」', '{repo} 改回顯示資料夾名',
 ```
 
-- [ ] **Step 2: 跑測試，確認新的測試失敗**
+- [x] **Step 2: 跑測試，確認新的測試失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: `116 pass`、`8 fail`。`tests/view.test.ts` 整個檔案載入失敗（`(fail) the file did not load`：它 import 的 `repoLabel` 還不存在，所以這個檔案裡的測試都沒跑）；另外 7 個 FAIL：`step_repo_tags_untags_and_skips_an_unknown_step`、`repo_names_are_set_and_dropped_and_stay_off_item_histories`、`logs_without_repos_replay_the_same`、`repo_op_and_add_repo_tag_steps`、`repo_name_refuses_a_name_another_repo_has`、`step_repo_and_repo_name_lines_in_both_languages`、`i18n_tables_have_the_same_keys`。`keeping_flagged_repo_lines_needs_no_card` 已經會過：現在的 `keep` 只對 `item.*` 要卡片，這個測試守住 spec 16.1、16.2 的「不用開卡」。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `types/index.d.ts`：
 
@@ -3112,12 +3112,12 @@ import { repoLabel } from './view.ts'
   if (named.length > 0) sections.push(`Repo names: ${named.map(([repo, name]) => `${repo} = ${name}`).join(', ')}`)
 ```
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `143 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -3139,7 +3139,7 @@ git commit -m "feat(plan-board): tag steps with a repo and give repos short name
 - Consumes: Task 18 的 `Step.repo`、`Plan.repoNames`、`repoLabel`、紀錄種類 `step.repo`／`repo.name`、`update_step` 的 `repo_name` op、`step.add` 的 `repo`、`tests/pane.test.ts` 的 `ERC`、`AUTH`。
 - Produces: `repoProgress(plan: Plan, itemId: string): { repo: string; done: number; total: number }[]`（`view.ts`，`repo` 是資料夾名）；`isChatter` 把 `step.repo` 算步驟瑣事；i18n 鍵 `posStepRepo`、`foldRetagged`；`tests/pane.test.ts` 的 helper `tagged()`。
 
-- [ ] **Step 1: 寫會失敗的測試，並改既有測試**
+- [x] **Step 1: 寫會失敗的測試，並改既有測試**
 
 `tests/view.test.ts`：最上面的 import 換成：
 
@@ -3338,12 +3338,12 @@ test('history_names_a_repo_by_its_current_short_name', async () => {
       '{item} · 第 {n} 項 · 卡在「{step}」（{repo}）', '改標 repo {n} 個',
   ```
 
-- [ ] **Step 2: 跑測試，確認新的測試失敗**
+- [x] **Step 2: 跑測試，確認新的測試失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: `120 pass`、`7 fail`。`tests/view.test.ts` 整個檔案載入失敗（`(fail) the file did not load`：`repoProgress` 還不存在）；另外 6 個 FAIL：`repos_show_by_short_name_on_items_steps_and_cards`、`a_new_or_dropped_short_name_shows_everywhere_at_once`、`history_names_a_repo_by_its_current_short_name`、`fold_text_counts_each_kind_in_both_languages`（`step.repo` 掉進 `foldKeyOf` 的 `default`，變成「連上文件 2 個」）、`no_ids_in_zh_tw_text`、`i18n_tables_have_the_same_keys`。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `hooks/view.ts`：
 
@@ -3498,12 +3498,12 @@ function whereText(current: Plan, card: Card, lang: Lang): string {
 
 （派給誰、備註、證據那幾個 `Text` 不變，照舊接在後面。輸入框上方那一列不改，spec 16.3。）
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `148 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -3525,7 +3525,7 @@ git commit -m "feat(plan-board): show repo progress, short names and retags in t
 - Consumes: 既有的 `isAnswered`、`bandCounts`、`summary`、`batchMessage`、`blockingMessage`、`cardBox`；測試只用 `tests/pane.test.ts` 現成的 `add`、`addAction`、`board`、`band`、`localOf`、`until`，不新增 helper。
 - Produces: `isAnswered(local, cardId)` 的新意思：送了選項、略過或想法都算已回答；`isThoughtOnly(local: Local, cardId: string): boolean`（`view.ts`）：已回答、而且只有想法。
 
-- [ ] **Step 1: 寫會失敗的測試，並改既有測試**
+- [x] **Step 1: 寫會失敗的測試，並改既有測試**
 
 `tests/view.test.ts`：最上面的 import 換成：
 
@@ -3738,12 +3738,12 @@ test('action_card_skip_and_thought_go_out_at_once', ZH, async ($, on) => {
 })
 ```
 
-- [ ] **Step 2: 跑測試，確認新的測試失敗**
+- [x] **Step 2: 跑測試，確認新的測試失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: `122 pass`、`6 fail`。`tests/view.test.ts` 整個檔案載入失敗（`(fail) the file did not load`：`isThoughtOnly` 還不存在）；另外 5 個 FAIL：`batch_message_text`、`blocking_message_text`、`a_thought_only_card_dims_and_waits_for_the_ai`、`a_blocking_thought_dims_the_card_at_once_and_the_step_keeps_its_flag`、`action_card_skip_and_thought_go_out_at_once`。`a_choice_sent_with_a_thought_dims_as_before` 已經會過（它守住 Review Focus 5：只有「只送想法」的卡改了樣子）。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `hooks/view.ts`：`isAnswered` 換成下面兩個：
 
@@ -3833,12 +3833,12 @@ import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswe
 
 送出的時機不變（spec 16.4）：`register.tsx` 的 `act` 照舊，`blocking` 的決定卡和待你處理卡立刻送，其他暫存。
 
-- [ ] **Step 4: 跑測試，確認全過**
+- [x] **Step 4: 跑測試，確認全過**
 
 Run: `claude plugin test plugins/plan-board` → `149 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board
@@ -3859,7 +3859,7 @@ git commit -m "feat(plan-board): a card answered with a thought is dimmed and se
 - Consumes: Task 18–20 的 op 名稱 `repo`、`repo_name`、`add` 的 `repo`；摘要的 `Repo names:` 那一行；只送想法的卡要當下結案。
 - Produces: 無。
 
-- [ ] **Step 1: 寫會失敗的測試**
+- [x] **Step 1: 寫會失敗的測試**
 
 `tests/view.test.ts` 最後加：
 
@@ -3876,12 +3876,12 @@ test('guide_covers_repos_short_names_and_settling_thoughts', () => {
 })
 ```
 
-- [ ] **Step 2: 跑測試，確認失敗**
+- [x] **Step 2: 跑測試，確認失敗**
 
 Run: `claude plugin test plugins/plan-board`
 Expected: `149 pass`、`1 fail`：`guide_covers_repos_short_names_and_settling_thoughts`。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `hooks/guide.ts` 的 `GUIDE`：
 
@@ -3956,14 +3956,14 @@ Expected: `149 pass`、`1 fail`：`guide_covers_repos_short_names_and_settling_t
 - 不管是選了選項、略過，還是只寫了想法，送出之後卡片都會變淡，直到 AI 結案。只寫想法的卡會顯示你的想法；AI 會當下結案，想法沒回答到問題時，會依你的想法再開一張新卡。
 ```
 
-- [ ] **Step 4: 跑全部檢查**
+- [x] **Step 4: 跑全部檢查**
 
 Run: `claude plugin test plugins/plan-board` → `150 pass`、`0 fail`。
 Run: `claude plugin validate plugins/plan-board --strict` → 沒有錯誤。
 Run: `claude plugin validate .` → 沒有錯誤。
 Run: `node --test tests-git/merge.test.ts` → `fail 0`。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/plan-board README.md README.zh-TW.md
