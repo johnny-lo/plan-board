@@ -7,6 +7,7 @@ import {
   bandCounts,
   blockedSteps,
   cardPosition,
+  entryCount,
   foldHistory,
   historyOf,
   isAnswered,
@@ -17,6 +18,8 @@ import {
   recentFor,
   repoLabel,
   repoProgress,
+  splitItems,
+  splitSteps,
 } from '../hooks/view.ts'
 import { entry, logText } from './fixtures.ts'
 import type { Entry, Local } from '../types'
@@ -416,4 +419,54 @@ test('guide_covers_repos_short_names_and_settling_thoughts', () => {
   expect(GUIDE).toContain('answered with a thought is settled now')
   expect(GUIDE).toContain('open a new card')
   expect(GUIDE).toContain("apply_change with the user's words as chat")
+})
+
+const planOf = async (...entries: Entry[]) => replay(await logText(entries))
+
+test('split_items_puts_done_items_apart_and_keeps_plan_order', async () => {
+  const plan = await planOf(
+    entry('item.add', { item: item('A') }), step('A', 's1'), status('s1', 'done'),
+    entry('item.add', { item: item('B') }), step('B', 's2'), status('s2', 'doing'),
+    entry('item.add', { item: item('C') }), step('C', 's3'), status('s3', 'done'),
+    entry('item.add', { item: item('D') }),
+  )
+  expect(splitItems(plan, itemStates(plan), new Set())).toEqual({ open: ['B', 'D'], done: ['A', 'C'] })
+  expect(splitItems(emptyPlan(), {}, new Set())).toEqual({ open: [], done: [] })
+})
+
+test('split_items_keeps_a_done_item_with_an_open_card_up_front', async () => {
+  const plan = await planOf(
+    entry('item.add', { item: item('A') }), step('A', 's1'), status('s1', 'done'),
+    entry('item.add', { item: item('B') }), step('B', 's2'), status('s2', 'done'),
+    card('c1', { item: 'B', step: 's2' }),
+  )
+  expect(itemStates(plan).B).toBe('done')
+  expect(splitItems(plan, itemStates(plan), blockedSteps(plan))).toEqual({ open: ['B'], done: ['A'] })
+})
+
+test('split_steps_keeps_unfinished_and_blocked_steps_up_front', async () => {
+  const plan = await planOf(
+    entry('item.add', { item: item('A') }),
+    step('A', 's1'), step('A', 's2'), step('A', 's3'), step('A', 's4'),
+    status('s1', 'done'), status('s2', 'doing'), status('s4', 'done'),
+    card('c1', { item: 'A', step: 's4' }),
+  )
+  expect(splitSteps(plan, 'A', blockedSteps(plan))).toEqual({ open: ['s2', 's3', 's4'], done: ['s1'] })
+  expect(splitSteps(plan, 'nope', new Set())).toEqual({ open: [], done: [] })
+})
+
+test('entry_count_counts_entries_not_rows', async () => {
+  const plan = await planOf(entry('item.add', { item: item('A') }), step('A', 's1'), step('A', 's2'), status('s1', 'done'))
+  const rows = foldHistory(historyOf(plan, 'A'))
+  expect(rows).toHaveLength(2)
+  expect(entryCount(rows)).toBe(4)
+  expect(entryCount([])).toBe(0)
+})
+
+test('guide_asks_for_a_short_why_and_applies_a_chat_requested_change_at_once', () => {
+  expect(GUIDE).toContain('why you ask now in one short sentence')
+  expect(GUIDE).toContain('asked for an item change themselves in the chat')
+  expect(GUIDE).toContain('apply_change right after propose_change')
+  expect(GUIDE).toContain('their own words as `chat`')
+  expect(GUIDE).toContain("only a change you thought of yourself waits for the user's approval in the pane")
 })

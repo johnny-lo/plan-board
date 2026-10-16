@@ -149,3 +149,9 @@ test('forget_keeps_open_history_rows_of_entries_still_in_the_log', async () => {
   const local = { ...emptyLocal(), expanded: ['A', `fold:${kept.id}`, `why:${kept.id}`, 'fold:000000000fff', 'why:gone', 'open'] }
   expect(forget(local, plan).expanded).toEqual(['A', `fold:${kept.id}`, `why:${kept.id}`, 'open'])
 })
+
+test('forget_keeps_the_open_groups_of_items_and_cards_that_still_exist', async () => {
+  const plan = await planOf(entry('item.add', { item: { id: 'A', title: 'A', goal: 'g' } }), question('open'))
+  const local = { ...emptyLocal(), expanded: ['group:done', 'steps:A', 'log:A', 'recent:open', 'steps:gone', 'log:gone', 'recent:gone'] }
+  expect(forget(local, plan).expanded).toEqual(['group:done', 'steps:A', 'log:A', 'recent:open'])
+})

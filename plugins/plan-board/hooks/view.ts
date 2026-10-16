@@ -126,3 +126,19 @@ export function bandCounts(plan: Plan, local: Local): { doing: number; waiting: 
     isEdited: plan.flagged.length > 0,
   }
 }
+
+/** The items split into the unfinished and the done, each in plan order; an item an open card points into stays with the unfinished. */
+export function splitItems(plan: Plan, states: Record<string, ItemState>, blocked: Set<string>): { open: string[]; done: string[] } {
+  const isDone = (id: string): boolean => states[id] === 'done' && !plan.items[id].steps.some(stepId => blocked.has(stepId))
+  return { open: plan.order.filter(id => !isDone(id)), done: plan.order.filter(isDone) }
+}
+
+/** An item's steps that exist, in plan order: the ones still to do or waiting on a card, and the done ones. */
+export function splitSteps(plan: Plan, itemId: string, blocked: Set<string>): { open: string[]; done: string[] } {
+  const ids = Object.hasOwn(plan.items, itemId) ? plan.items[itemId].steps.filter(stepId => Object.hasOwn(plan.steps, stepId)) : []
+  const isDone = (stepId: string): boolean => plan.steps[stepId].status === 'done' && !blocked.has(stepId)
+  return { open: ids.filter(stepId => !isDone(stepId)), done: ids.filter(isDone) }
+}
+
+/** How many log entries the rows stand for. */
+export const entryCount = (rows: Row[]): number => rows.reduce((n, row) => n + (row.kind === 'entry' ? 1 : row.entries.length), 0)

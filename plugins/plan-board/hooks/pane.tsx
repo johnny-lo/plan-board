@@ -3,12 +3,31 @@ import type { EngineInterface } from 'claude-code'
 import { t } from './i18n.ts'
 import type { Key, Lang } from './i18n.ts'
 import { assignedText, changeLine, fit, foldText, historyLines, stamp, textWidth } from './lines.ts'
-import { bandCounts, blockedSteps, cardPosition, foldHistory, historyOf, isAnswered, isThoughtOnly, itemStates, openCards, recentFor, repoLabel, repoProgress } from './view.ts'
+import {
+  bandCounts,
+  blockedSteps,
+  cardPosition,
+  entryCount,
+  foldHistory,
+  historyOf,
+  isAnswered,
+  isThoughtOnly,
+  itemStates,
+  openCards,
+  recentFor,
+  repoLabel,
+  repoProgress,
+  splitItems,
+  splitSteps,
+} from './view.ts'
 import type { Row } from './view.ts'
 import type { Card, Entry, ItemState, Local, Plan, Step } from '../types'
 
 /** How many earlier entries a card shows. */
 const RECENT = 3
+
+/** The widest an item's name gets in the line that says where a card sits. */
+const CRUMB_ITEM = 20
 
 /** The elements of the surface being drawn, as `$.ui.resolve(e)` hands them over. */
 export type Elements = ReturnType<EngineInterface['ui']['resolve']>
@@ -40,12 +59,13 @@ function markOf(step: Step, isBlocked: boolean, lang: Lang): string {
   return t(lang, step.status === 'doing' ? 'markDoing' : 'markTodo')
 }
 
+/** Where a card sits as a breadcrumb: item › step, with the step's repo before the step. */
 function whereText(current: Plan, card: Card, lang: Lang): string {
   const where = cardPosition(current, card)
   if (where.item === undefined) return t(lang, 'posOther')
-  const n = where.index ?? 0
-  if (where.step === undefined) return t(lang, 'posItem', { item: where.item.title, n })
-  const vars = { item: where.item.title, n, step: where.step.title }
+  const item = fit(where.item.title, CRUMB_ITEM)
+  if (where.step === undefined) return t(lang, 'posItem', { item })
+  const vars = { item, step: where.step.title }
   return where.step.repo === undefined ? t(lang, 'posStep', vars) : t(lang, 'posStepRepo', { ...vars, repo: repoLabel(current, where.step.repo) })
 }
 
@@ -102,6 +122,11 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
     )
   }
 
+  /** A line that opens and closes what sits under it; `key` is what `mine.expanded` keeps. */
+  const foldButton = (key: string, label: string) => (
+    <Button key={key} plain label={`${mine.expanded.includes(key) ? '▾' : '▸'} ${label}`} onPress={() => actions.toggle(key)} />
+  )
+
   const overview = () => {
     if (current.order.length === 0) {
       return (
@@ -113,75 +138,97 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
     }
     const states = itemStates(current)
     const blocked = blockedSteps(current)
-    return (
-      <Box flexDirection="column">
-        {localLine}
-        {current.order.map(id => {
-          const item = current.items[id]
-          const isOpen = mine.expanded.includes(id)
-          const hasBlocked = item.steps.some(stepId => blocked.has(stepId))
-          const label = `${isOpen ? '▾' : '▸'} ${item.title} · ${t(lang, STATE_KEY[states[id]])}${hasBlocked ? ' ⚑' : ''}`
-          // How far each repo is, dimmed after the state; it wraps rather than being cut.
-          const progress = repoProgress(current, id)
-            .map(row => `· ${repoLabel(current, row.repo)} ${row.done}/${row.total}`)
-            .join(' ')
-          const itemButton = <Button key={`item:${id}`} plain label={label} onPress={() => actions.toggle(id)} />
-          return (
-            <Box key={`box:item:${id}`} flexDirection="column">
-              {progress === '' ? (
-                itemButton
-              ) : (
-                <Box flexDirection="row" gap={1}>
-                  {itemButton}
-                  <Box flexShrink={1}>
-                    <Text dimColor wrap="wrap">
-                      {progress}
-                    </Text>
-                  </Box>
+
+    const stepRow = (stepId: string) => {
+      const step = current.steps[stepId]
+      const waiting = open.find(card => card.step === stepId)
+      const note =
+        waiting === undefined ? evidenceOf(step, lang) : t(lang, waiting.type === 'action' ? 'waitingAction' : 'blockedBy', { question: waiting.question })
+      const mark = markOf(step, waiting !== undefined, lang)
+      return (
+        <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
+          {step.repo === undefined ? (
+            <Text>{`${mark} ${step.title}`}</Text>
+          ) : (
+            <Box flexDirection="row" gap={1}>
+              <Text>{mark}</Text>
+              <Text dimColor>{`${repoLabel(current, step.repo)} ·`}</Text>
+              <Text>{step.title}</Text>
+            </Box>
+          )}
+          {step.assignee !== undefined && <Text dimColor>{assignedText(step.assignee, lang)}</Text>}
+          {step.note !== undefined && <Text dimColor>{step.note}</Text>}
+          {note !== '' && <Text dimColor>{note}</Text>}
+        </Box>
+      )
+    }
+
+    const itemBox = (id: string) => {
+      const item = current.items[id]
+      const isOpen = mine.expanded.includes(id)
+      const hasBlocked = item.steps.some(stepId => blocked.has(stepId))
+      const label = `${isOpen ? '▾' : '▸'} ${item.title} · ${t(lang, STATE_KEY[states[id]])}${hasBlocked ? ' ⚑' : ''}`
+      // How far each repo is, dimmed after the state; it wraps rather than being cut.
+      const progress = repoProgress(current, id)
+        .map(row => `· ${repoLabel(current, row.repo)} ${row.done}/${row.total}`)
+        .join(' ')
+      const itemButton = <Button key={`item:${id}`} plain label={label} onPress={() => actions.toggle(id)} />
+      const steps = splitSteps(current, id, blocked)
+      const stepsKey = `steps:${id}`
+      const logKey = `log:${id}`
+      const rows = foldHistory(historyOf(current, id))
+      return (
+        <Box key={`box:item:${id}`} flexDirection="column">
+          {progress === '' ? (
+            itemButton
+          ) : (
+            <Box flexDirection="row" gap={1}>
+              {itemButton}
+              <Box flexShrink={1}>
+                <Text dimColor wrap="wrap">
+                  {progress}
+                </Text>
+              </Box>
+            </Box>
+          )}
+          {isOpen && (
+            <Box flexDirection="column" paddingLeft={2}>
+              <Text wrap="wrap">{t(lang, 'goal', { goal: item.goal })}</Text>
+              {item.docs.map((doc, i) => (
+                <Text key={`doc:${id}:${i}`} wrap="wrap">
+                  {t(lang, 'doc', { path: doc })}
+                </Text>
+              ))}
+              {steps.open.map(stepRow)}
+              {steps.done.length > 0 && foldButton(stepsKey, t(lang, 'doneSteps', { n: steps.done.length }))}
+              {steps.done.length > 0 && mine.expanded.includes(stepsKey) && (
+                <Box flexDirection="column" paddingLeft={2}>
+                  {steps.done.map(stepRow)}
                 </Box>
               )}
-              {isOpen && (
+              {rows.length > 0 && foldButton(logKey, t(lang, 'logFold', { n: entryCount(rows) }))}
+              {rows.length > 0 && mine.expanded.includes(logKey) && (
                 <Box flexDirection="column" paddingLeft={2}>
-                  <Text wrap="wrap">{t(lang, 'goal', { goal: item.goal })}</Text>
-                  {item.docs.map((doc, i) => (
-                    <Text key={`doc:${id}:${i}`} wrap="wrap">
-                      {t(lang, 'doc', { path: doc })}
-                    </Text>
-                  ))}
-                  {item.steps
-                    .filter(stepId => Object.hasOwn(current.steps, stepId))
-                    .map(stepId => {
-                      const step = current.steps[stepId]
-                      const waiting = open.find(card => card.step === stepId)
-                      const note =
-                        waiting === undefined
-                          ? evidenceOf(step, lang)
-                          : t(lang, waiting.type === 'action' ? 'waitingAction' : 'blockedBy', { question: waiting.question })
-                      const mark = markOf(step, waiting !== undefined, lang)
-                      return (
-                        <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
-                          {step.repo === undefined ? (
-                            <Text>{`${mark} ${step.title}`}</Text>
-                          ) : (
-                            <Box flexDirection="row" gap={1}>
-                              <Text>{mark}</Text>
-                              <Text dimColor>{`${repoLabel(current, step.repo)} ·`}</Text>
-                              <Text>{step.title}</Text>
-                            </Box>
-                          )}
-                          {step.assignee !== undefined && <Text dimColor>{assignedText(step.assignee, lang)}</Text>}
-                          {step.note !== undefined && <Text dimColor>{step.note}</Text>}
-                          {note !== '' && <Text dimColor>{note}</Text>}
-                        </Box>
-                      )
-                    })}
-                  <Text dimColor>{t(lang, 'logRule')}</Text>
-                  {foldHistory(historyOf(current, id)).map(row => historyRow(id, row))}
+                  {rows.map(row => historyRow(id, row))}
                 </Box>
               )}
             </Box>
-          )
-        })}
+          )}
+        </Box>
+      )
+    }
+
+    const items = splitItems(current, states, blocked)
+    return (
+      <Box flexDirection="column">
+        {localLine}
+        {items.open.map(itemBox)}
+        {items.done.length > 0 && foldButton('group:done', t(lang, 'doneItems', { n: items.done.length }))}
+        {items.done.length > 0 && mine.expanded.includes('group:done') && (
+          <Box flexDirection="column" paddingLeft={2}>
+            {items.done.map(itemBox)}
+          </Box>
+        )}
       </Box>
     )
   }
@@ -240,6 +287,15 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
         <Button key={`${card.id}:x`} plain dimColor role="dismiss" label="✕" onPress={() => actions.dismiss(card)} />
       </Box>
     )
+    /** The label on a line of its own, the reason indented under it. */
+    const whyBox = (label: 'why' | 'actionWhy') => (
+      <Box flexDirection="column" marginTop={1}>
+        <Text dimColor>{t(lang, label)}</Text>
+        <Box paddingLeft={2}>
+          <Text wrap="wrap">{card.why}</Text>
+        </Box>
+      </Box>
+    )
     const typed = Object.hasOwn(typing, card.id) ? typing[card.id] : ''
     const noteBox = Input && (
       <Box flexDirection="column" marginTop={1}>
@@ -265,7 +321,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
           <Text dimColor italic wrap="wrap">
             {where}
           </Text>
-          <Text wrap="wrap">{t(lang, 'actionWhy', { why: card.why })}</Text>
+          {whyBox('actionWhy')}
           {card.command !== undefined && <Text wrap="wrap">{t(lang, 'command', { command: card.command })}</Text>}
           <Box marginTop={1}>
             <Button key={`${card.id}:done`} plain {...hotkey(0)} label={t(lang, 'actionDone')} onPress={() => actions.choose(card, 'done')} />
@@ -276,6 +332,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
     }
 
     const recent = recentFor(current, card, RECENT)
+    const recentKey = `recent:${card.id}`
     const hasStaged = staged !== undefined
     return (
       <Box key={`card:box:${card.id}`} flexDirection="column" {...border(hasStaged ? 'green' : isFirst ? 'yellow' : 'gray')}>
@@ -283,19 +340,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
         <Text dimColor italic wrap="wrap">
           {where}
         </Text>
-        <Text wrap="wrap">{t(lang, 'why', { why: card.why })}</Text>
-        {recent.length > 0 && (
-          <Box flexDirection="column">
-            <Text dimColor>{t(lang, 'recent')}</Text>
-            {recent.map(row => (
-              <Box key={`recent:${card.id}:${row.kind === 'entry' ? row.entry.id : row.key}`} paddingLeft={2}>
-                <Text dimColor wrap="wrap">
-                  {row.kind === 'entry' ? historyLines(row.entry, current, lang)[0] : `${stamp(row.entries[0].at)} ${foldText(row.entries, lang)}`}
-                </Text>
-              </Box>
-            ))}
-          </Box>
-        )}
+        {whyBox('why')}
         <Box flexDirection="column" marginTop={1}>
           {card.type === 'proposal' ? (
             <Box flexDirection="column">
@@ -359,6 +404,21 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
               )}
             </Box>
             <Button key={`${card.id}:clear`} plain dimColor label={t(lang, 'clear')} onPress={() => actions.clear(card)} />
+          </Box>
+        )}
+        {recent.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            {foldButton(recentKey, t(lang, 'recent', { n: recent.length }))}
+            {mine.expanded.includes(recentKey) &&
+              recent.map(row =>
+                row.kind === 'entry' ? (
+                  logRow(card.id, row.entry, true)
+                ) : (
+                  <Box key={`recent:${card.id}:${row.key}`} paddingLeft={2}>
+                    <Text dimColor wrap="wrap">{`${stamp(row.entries[0].at)} ${foldText(row.entries, lang)}`}</Text>
+                  </Box>
+                ),
+              )}
           </Box>
         )}
         {noteBox}

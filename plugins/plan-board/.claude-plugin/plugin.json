@@ -1,6 +1,6 @@
 {
   "name": "plan-board",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Keep each repo's plan in plan/log.jsonl and review it in a pane.",
   "author": { "name": "plan-board contributors" },
   "types": "./types/index.d.ts",
