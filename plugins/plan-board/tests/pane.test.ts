@@ -421,7 +421,34 @@ test('band_text_and_edit_warning', ZH, async ($, on) => {
   }
 })
 
-test('empty_repo_shows_hint_and_engine_band', ZH, async ($, on) => {
+test('band_keeps_what_the_mods_after_it_draw', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), blockedOnS2()])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await band($, surface)
+    expect(await ui.find({ type: 'Text', text: /計畫：/ })).toBeDefined()
+    expect(await ui.find({ text: 'engine band' })).toBeDefined()
+    // The plan's line sits above what the others drew.
+    expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { flexDirection: 'column' }, children: [{ type: 'Box' }, ENGINE_BAND] })
+    await ui.unmount()
+  }
+})
+
+test('band_is_only_the_plan_line_when_nothing_is_drawn_below', ZH, async ($, on) => {
+  const w = world(on, { [LOG]: await logText([...board(), blockedOnS2()]) })
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', children: [] }))
+  await $.session.start({ cwd: '/repo' })
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await band($, surface)
+    expect((await ui.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 件事等你')
+    expect(await ui.find({ key: 'open' })).toBeDefined()
+    expect(await ui.find({ text: 'engine band' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('empty_repo_shows_hint_and_engine_band', ZH,async ($, on) => {
   const w = await start($, on, null)
   for (const surface of SURFACES) {
     await fresh($, w)

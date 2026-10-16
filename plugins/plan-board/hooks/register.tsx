@@ -325,6 +325,7 @@ export const register: Register = (on, options) => {
     const current = await read($, plan)
     if (isBandEmpty(current)) return next(e)
     const open = () => $.ui.open({ id: PANE, title: TITLE })
-    return bandView($.ui.resolve(e), current, await read($, local), lang, e.props.bodyColumns, open)
+    const theirs = await next(e)
+    return bandView($.ui.resolve(e), current, await read($, local), lang, e.props.bodyColumns, open, theirs)
   })
 }

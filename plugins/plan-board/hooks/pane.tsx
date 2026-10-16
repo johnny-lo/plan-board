@@ -468,8 +468,8 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
 /** Whether there is nothing to say above the prompt: no items, no open cards, no hand-edited lines. */
 export const isBandEmpty = (current: Plan): boolean => current.order.length === 0 && openCards(current).length === 0 && current.flagged.length === 0
 
-/** The line above the prompt: the plan's counts and a button for the pane. */
-export function bandView(elements: Elements, current: Plan, mine: Local, lang: Lang, columns: number, open: () => unknown) {
+/** The line above the prompt: the plan's counts and a button for the pane, over what the mods after this one drew there. */
+export function bandView(elements: Elements, current: Plan, mine: Local, lang: Lang, columns: number, open: () => unknown, theirs?: unknown) {
   const counts = bandCounts(current, mine)
   const text = t(lang, 'band', { doing: counts.doing, waiting: counts.waiting })
   const line = counts.isEdited ? `${text} ${t(lang, 'editedBand')}` : text
@@ -478,9 +478,12 @@ export function bandView(elements: Elements, current: Plan, mine: Local, lang: L
   // The Button draws as `[ label ]`, one cell of gap before it.
   const room = Math.max(0, columns - textWidth(label) - 5)
   return (
-    <Box flexDirection="row" gap={1}>
-      <Text>{fit(line, room)}</Text>
-      <Button key="open" label={label} onPress={() => open()} />
+    <Box flexDirection="column">
+      <Box flexDirection="row" gap={1}>
+        <Text>{fit(line, room)}</Text>
+        <Button key="open" label={label} onPress={() => open()} />
+      </Box>
+      {theirs ?? null}
     </Box>
   )
 }
