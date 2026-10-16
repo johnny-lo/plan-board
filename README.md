@@ -25,7 +25,7 @@ The plugin has one option, `language`: `en` (the default) or `zh-TW`. Claude Cod
 
 There are two modes, decided each time the plan is read: **repo mode** when `plan/log.jsonl` exists, **local mode** when it does not. The tools, the pane and the line above the prompt work the same in both.
 
-- In repo mode the plan is `plan/log.jsonl` in the repo's root (the worktree's `git rev-parse --show-toplevel`; the session's directory when it is not a git repo). It is a log: one JSON line per change, only ever appended to. The overview, the cards and every state are computed from the log; no current state is stored anywhere.
+- In repo mode the plan is `plan/log.jsonl` in the repo's root (the worktree's `git rev-parse --show-toplevel`, run in the session's project root: where the session started, or where `/cd` or a worktree move took it, never a shell `cd`; that project root itself when it is not a git repo). It is a log: one JSON line per change, only ever appended to. The overview, the cards and every state are computed from the log; no current state is stored anywhere.
 - In repo mode the first write also adds this line to `.gitattributes`:
 
   ```
@@ -36,7 +36,7 @@ There are two modes, decided each time the plan is read: **repo mode** when `pla
 - The plan follows the code: each branch has its own copy, and a feature branch's progress shows on `main` after the merge.
 - In local mode the plan is the same log text, kept in the plugin's store on this machine under the repo's root. It does not follow git, `.gitattributes` is left alone, and no file in the repo is created or changed. The overview shows one small line saying so.
 - When one session looks after several repos, start it in the folder that holds them. The plan is then that folder's own local plan, and each step can say which repo it is done in (see "Items and steps").
-- Only you move a repo to repo mode, by typing `/plan init` in it. It creates `plan/log.jsonl` with the local log unchanged, clears the local copy and makes sure `.gitattributes` has the line above. Neither the plugin's tools nor the AI ever create `plan/`; when a repo looks like a good place for one, the AI asks you with a decision card whether to run `/plan init`. When `plan/log.jsonl` already exists, `/plan init` changes nothing and says so.
+- Only you move a repo to repo mode, by typing `/plan init` in it. It creates `plan/log.jsonl` with the local log unchanged, clears the local copy and makes sure `.gitattributes` has the line above; when the root is not a git repo it changes nothing and the plan stays on your machine. Neither the plugin's tools nor the AI ever create `plan/`; when a repo looks like a good place for one, the AI asks you with a decision card whether to run `/plan init`. When `plan/log.jsonl` already exists, `/plan init` changes nothing and says so.
 - The plan is changed only through the plugin's tools. `Edit` and `Write` on files under `plan/` are refused. Each line carries a checksum, so a line changed any other way (a shell, another tool, your editor) is marked as edited directly: the pane and the line above the prompt warn you, and the AI is asked to look at `git diff -- plan/log.jsonl` and either keep or drop it, asking you first when it touches items.
 - The pane's stage-and-send state (picks not yet sent, cards sent and waiting to be closed, what is expanded) belongs to your machine and is not in the repo.
 

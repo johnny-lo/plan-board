@@ -3,8 +3,9 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { GUIDE, summary } from './guide.ts'
 import { langOf, t } from './i18n.ts'
-import { commitEntries, commitLocal, initRepo, modeOf, readLog, readStored, rootOf } from './logfile.ts'
-import type { Files, Store } from './logfile.ts'
+import type { Key } from './i18n.ts'
+import { commitEntries, commitLocal, initRepo, logPath, modeOf, readLog, readStored, rootOf } from './logfile.ts'
+import type { Files, InitResult, Store } from './logfile.ts'
 import {
   asLocal,
   batchMessage,
@@ -44,6 +45,7 @@ const NOTE_ATTRIBUTES =
 const INIT_REPLY = {
   created: 'initDone',
   exists: 'initAlready',
+  'not-repo': 'initNotRepo',
   'no-attributes': 'initNoAttributes',
   kept: 'initKept',
   'kept-no-attributes': 'initKeptNoAttributes',
@@ -51,13 +53,20 @@ const INIT_REPLY = {
   half: 'initHalf',
 } as const
 
+/** The reply to /plan init: a plan/log.jsonl made from no local plan says it is empty instead of moved. */
+function initReply(made: InitResult): Key {
+  if (made.lines === 0 && made.outcome === 'created') return 'initEmpty'
+  if (made.lines === 0 && made.outcome === 'no-attributes') return 'initEmptyNoAttributes'
+  return INIT_REPLY[made.outcome]
+}
+
 /** The full tool names $.tool.register gave this load's tools. */
 const names = new Map<string, ToolName>()
 
 const slashed = (path: string): string => path.replace(/\\/g, '/')
 // The loader follows `$` only inside this file, so logfile.ts gets closures over it.
 const filesOf = ($: EngineInterface): Files => ({
-  session: { cwd: () => $.session.cwd() },
+  session: { root: () => $.session.root() },
   process: { run: (argv, init) => $.process.run(argv, init) },
   fs: {
     exists: path => $.fs.exists(path),
@@ -289,14 +298,15 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'plan' }, async ($, e) => {
     if ((e.args ?? '').trim() === 'init') {
-      let made: Awaited<ReturnType<typeof initRepo>>
+      const top = await rootNow($)
+      let made: InitResult
       try {
-        made = await initRepo(filesOf($), storeOf($), await rootNow($))
+        made = await initRepo(filesOf($), storeOf($), top)
       } catch {
-        made = 'failed'
+        made = { outcome: 'failed', lines: 0, path: logPath(top) }
       }
       await refresh($).catch(() => emptyPlan())
-      return { text: t(lang, INIT_REPLY[made]) }
+      return { text: t(lang, initReply(made), { path: made.path, n: made.lines, root: top }) }
     }
     await refresh($)
     await $.ui.open({ id: PANE, title: TITLE })

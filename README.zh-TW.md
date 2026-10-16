@@ -25,7 +25,7 @@ plan-board 是 Claude Code 外掛。有 `plan/log.jsonl` 的 repo 把計畫存�
 
 有兩種模式，每次讀計畫時判斷：`plan/log.jsonl` 存在是 **repo 模式**，不存在是**本機模式**。工具、窗格和輸入框上方一列在兩種模式下用法一樣。
 
-- repo 模式的計畫是 repo 根目錄的 `plan/log.jsonl`（根目錄就是 worktree 的 `git rev-parse --show-toplevel`；不是 git repo 就用 session 的目錄）。它是一份紀錄：每次改動一行 JSON，只往後加。總表、卡片和所有狀態都是從紀錄算出來的，沒有另外存「目前狀態」。
+- repo 模式的計畫是 repo 根目錄的 `plan/log.jsonl`（根目錄就是在 session 的專案根目錄跑 `git rev-parse --show-toplevel` 得到的 worktree 根目錄；專案根目錄是啟動目錄，或 `/cd`、worktree 移動後的目錄，shell `cd` 不會移動它；不是 git repo 就用專案根目錄本身）。它是一份紀錄：每次改動一行 JSON，只往後加。總表、卡片和所有狀態都是從紀錄算出來的，沒有另外存「目前狀態」。
 - repo 模式第一次寫入時，也會在 `.gitattributes` 加上這一行：
 
   ```
@@ -36,7 +36,7 @@ plan-board 是 Claude Code 外掛。有 `plan/log.jsonl` 的 repo 把計畫存�
 - 計畫跟著程式碼走：每個分支各一份，feature 分支的進度要合併之後主分支才看得到。
 - 本機模式的計畫是同一份紀錄文字，存在外掛在這台電腦上的存放區，以 repo 根目錄分開。它不跟著 git 走，不碰 `.gitattributes`，repo 裡的檔案也不會被建立或修改。總表上會有一行小字說明。
 - 一個 session 管好幾個 repo 時，從這些 repo 的上層資料夾開 session，計畫就是那個資料夾的一份本機計畫；每個步驟可以標在哪個 repo 做（見「項目和步驟」）。
-- 只有你能把 repo 改成 repo 模式：在那個 repo 打 `/plan init`。它會建立 `plan/log.jsonl`、把本機的紀錄原封不動搬進去、清掉本機那份，並確認 `.gitattributes` 有上面那一行。外掛的工具和 AI 都不會自己建立 `plan/`；AI 覺得某個 repo 適合放計畫時，會用決定卡片問你要不要打 `/plan init`。`plan/log.jsonl` 已經存在時，`/plan init` 什麼都不改，只會說明。
+- 只有你能把 repo 改成 repo 模式：在那個 repo 打 `/plan init`。它會建立 `plan/log.jsonl`、把本機的紀錄原封不動搬進去、清掉本機那份，並確認 `.gitattributes` 有上面那一行；根目錄不是 git repo 時什麼都不改，計畫留在你的電腦。外掛的工具和 AI 都不會自己建立 `plan/`；AI 覺得某個 repo 適合放計畫時，會用決定卡片問你要不要打 `/plan init`。`plan/log.jsonl` 已經存在時，`/plan init` 什麼都不改，只會說明。
 - 計畫只能透過外掛的工具改。對 `plan/` 底下的檔案用 `Edit` 和 `Write` 會被拒絕。每一行都有檢查碼，所以用別的方式改過的行（終端機、別的工具、你的編輯器）會被標成被直接改過：窗格和輸入框上方一列會提醒你，AI 會被要求看 `git diff -- plan/log.jsonl`，決定保留或丟掉；動到項目時會先問你。
 - 窗格上的暫存與送出狀態（還沒送出的選擇、已送出等結案的卡片、展開的項目）只屬於這台電腦，不在 repo 裡。
 

@@ -25,6 +25,12 @@ export type World = {
   onStoreGet: ((key: string) => void) | null
   /** Called on every file read after it took its text but before it answers, so a test can play another session writing right after the read. */
   onRead: ((path: string) => void) | null
+  /** The session's project root (`$.session.root()`); a shell `cd` does not move it. */
+  root: string
+  /** The directory the session runs in (`$.session.cwd()`); a shell `cd` moves it. */
+  cwd: string
+  /** Git worktree tops: `git rev-parse --show-toplevel` in one, or below one, answers it; anywhere else is not a repo. */
+  gitRoots: string[]
 }
 
 // A session on /repo, in memory: files, the plugin store, git, a clock that moves by itself and timers the test fires.
@@ -48,6 +54,9 @@ export function world(on: On, files: Record<string, string> = {}): World {
     failDeletes: false,
     onStoreGet: null,
     onRead: null,
+    root: '/repo',
+    cwd: '/repo',
+    gitRoots: ['/repo'],
   }
   // The engine hands paths over in the host's spelling (drive letter and backslashes on Windows); files are keyed /repo/plan.
   const key = (path: string): string => path.replace(/^[a-z]:/i, '').replace(/\\/g, '/')
@@ -84,7 +93,12 @@ export function world(on: On, files: Record<string, string> = {}): World {
     w.store.set(e.key, JSON.parse(JSON.stringify(e.value)))
     return { value: undefined }
   })
-  on('process.run', () => ({ value: { exitCode: 0, stdout: '/repo\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_, e) => {
+    const dir = key(String(e.init?.cwd ?? w.cwd))
+    const top = e.argv.join(' ') === 'git rev-parse --show-toplevel' ? w.gitRoots.find(r => dir === r || dir.startsWith(`${r}/`)) : undefined
+    const ran = top === undefined ? { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' } : { exitCode: 0, stdout: `${top}\n`, stderr: '' }
+    return { value: { ...ran, isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('clock.now', () => {
     const now = time
     time += w.clockStep
@@ -111,6 +125,7 @@ export function world(on: On, files: Record<string, string> = {}): World {
   on('tool.call', () => ({ result: 'passed through' }))
   on('prompt.compose', () => ({ sections: [] }))
   on('session.start', (_, e) => e)
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.cwd', () => ({ value: w.cwd }))
+  on('session.root', () => ({ value: w.root }))
   return w
 }

@@ -143,7 +143,7 @@
 ### 5.1 位置
 
 - 計畫跟著程式碼放，每個分支各一份（使用者選的）。後果：每個 worktree 的窗格顯示那個分支知道的計畫；feature 分支的進度合併後主分支才看得到。
-- worktree 根目錄 = 在 session 的目錄跑 `git rev-parse --show-toplevel`；不是 git repo 就用 session 的目錄。
+- worktree 根目錄 = 在 session 的專案根目錄跑 `git rev-parse --show-toplevel`；不是 git repo 就用專案根目錄本身。session 的專案根目錄（`$.session.root()`）是啟動目錄，或 `/cd`、worktree 移動後的目錄；shell `cd` 不會移動它。
 - 檔案：`<根目錄>/plan/log.jsonl`。UTF-8、不加 BOM、換行用 LF、一行一筆 JSON。
 - 第一次寫入時，工具確認 `<根目錄>/.gitattributes` 有這一行，沒有就加上：
 
@@ -160,7 +160,7 @@
 - **兩種模式**：`<根目錄>/plan/log.jsonl` 存在 = **repo 模式**（照 5.1）；不存在 = **本機模式**。每次讀計畫時判斷，不另存設定。
 - **本機模式**：紀錄的文字（格式和 `log.jsonl` 一模一樣，一行一筆、有檢查碼）存在 `$.store` 的 `log:<根目錄>` 底下。讀、寫、重試、檢查碼、重算都沿用同一套程式，只是讀寫的地方不同。本機模式不碰 `.gitattributes`，也不會被別的工具直接改到，所以不會有「被直接改過」的行。
 - **工具在兩種模式下都能用**（卡片、項目、步驟都可以）。本機模式的紀錄不跟 git 走，只在這台電腦。
-- **只有使用者能把 repo 改成 repo 模式**：在那個 repo 打 `/plan init`。它會建立 `plan/log.jsonl`、把本機已有的紀錄原封不動搬進去（之後清掉本機那份）、確認 `.gitattributes` 有 5.1 那一行。工具和 AI 都不會自己建立 `plan/`；AI 覺得這個 repo 適合放計畫時，用 `add_decision` 問使用者要不要打 `/plan init`。
+- **只有使用者能把 repo 改成 repo 模式**：在那個 repo 打 `/plan init`。它會建立 `plan/log.jsonl`、把本機已有的紀錄原封不動搬進去（之後清掉本機那份）、確認 `.gitattributes` 有 5.1 那一行；根目錄不是 git repo 時什麼都不改，計畫留在這台電腦。工具和 AI 都不會自己建立 `plan/`；AI 覺得這個 repo 適合放計畫時，用 `add_decision` 問使用者要不要打 `/plan init`。
 - `/plan init` 遇到 `plan/log.jsonl` 已經存在時，什麼都不改，只說已經是 repo 模式。
 - 給 AI 的摘要第一行寫明目前是哪個模式（`Plan storage: repo (plan/log.jsonl)` 或 `Plan storage: this machine only (run /plan init to keep it in the repo)`）。窗格的總表最上方用一行小字標出本機模式。
 
@@ -345,7 +345,7 @@
 
 - 本機模式的寫入，**每一次嘗試**在寫之前都重新看 `plan/log.jsonl` 在不在。在的話，這筆寫入改照 repo 模式寫進 `plan/log.jsonl`（包括補 `.gitattributes`），不寫 `$.store`。`plan/log.jsonl` 已經在的時候，絕不在 `$.store` 建立或改寫這個 repo 的本機 log。
 - `/plan init` 刪本機那份之前再讀一次。跟抄進去的不一樣，就把多出來的行補進 `plan/log.jsonl`：`plan/log.jsonl` 裡已經有的行不重複加，原本的行都留著（跟 git 的 `merge=union` 同一個意思）。補完再確認一次，最多 3 次。
-- 3 次都還在變：不刪本機那份，回覆「計畫已搬進 `plan/log.jsonl`，但這段時間別的 session 一直在寫本機那份，所以本機那份先留著沒刪」（英文版同義）。`.gitattributes` 照常補。
+- 3 次都還在變：不刪本機那份，回覆「計畫已搬進 `{絕對路徑}`（{n} 筆紀錄），但這段時間別的 session 一直在寫本機那份，所以本機那份先留著沒刪」（英文版同義）。`{絕對路徑}` 是 `<根目錄>/plan/log.jsonl`，`{n}` 是這台電腦的紀錄裡已經在那個檔裡的筆數。`.gitattributes` 照常補。
 - 不加跨 session 的鎖：「重新看」和「寫」之間仍有極短的空檔，接受。
 
 ### 14.2 `/plan init` 失敗的回覆
@@ -354,8 +354,8 @@
 
 - 文字從對照表拿，照 `language` 回英文或中文，不帶原始的系統錯誤文字。
 - 照實說做到哪一步：
-  - `plan/log.jsonl` 沒建成：說沒建成、什麼都沒改、計畫還在這台電腦。
-  - `plan/log.jsonl` 建成了，之後的步驟出錯（例如刪本機那份失敗）：說計畫已搬進 `plan/log.jsonl`，本機那份還留著。
+  - `plan/log.jsonl` 沒建成：說沒能搬進 `{絕對路徑}`（同 14.1）、什麼都沒改、計畫還在這台電腦。
+  - `plan/log.jsonl` 建成了，之後的步驟出錯（例如刪本機那份失敗）：說計畫已搬進 `{絕對路徑}`（{n} 筆紀錄），本機那份還留著。
 - 給 AI 的錯誤（工具呼叫的 `deny`）不在這次範圍，照舊英文。
 
 ## 15. 試用回饋（2026-10-11 加）

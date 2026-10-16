@@ -6,7 +6,7 @@ import type { Entry, Storage } from '../types'
  * declares it, so register.tsx hands over closures such as `exists: path => $.fs.exists(path)` instead of `$`.
  */
 export type Files = {
-  session: { cwd: () => Promise<string> }
+  session: { root: () => Promise<string> }
   process: { run: (argv: string[], init: { cwd: string }) => Promise<{ exitCode: number; stdout: string }> }
   fs: {
     exists: (path: string) => Promise<boolean>
@@ -28,14 +28,23 @@ const ATTRIBUTES_LINE = 'plan/log.jsonl merge=union'
 
 const slashed = (path: string): string => path.replace(/\\/g, '/')
 
-export async function rootOf($: Files): Promise<string> {
-  const cwd = await $.session.cwd()
+/** The git worktree top `dir` is in, or null when it is in none. */
+async function toplevel($: Files, dir: string): Promise<string | null> {
   try {
-    const ran = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd })
+    const ran = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd: dir })
     const top = ran.stdout.trim()
     if (ran.exitCode === 0 && top !== '') return slashed(top)
   } catch {}
-  return slashed(cwd)
+  return null
+}
+
+/**
+ * The worktree the plan belongs to: the git top of the session's project root, or that root when it is not in a git repo.
+ * The project root is where the session started or where /cd or a worktree move took it; a shell cd does not move it.
+ */
+export async function rootOf($: Files): Promise<string> {
+  const dir = await $.session.root()
+  return (await toplevel($, dir)) ?? slashed(dir)
 }
 
 export const logPath = (root: string): string => `${root}/plan/log.jsonl`
@@ -203,22 +212,36 @@ async function appendGained(medium: Medium, now: string): Promise<void> {
   throw new Error('plan/log.jsonl keeps changing')
 }
 
+export type InitOutcome = 'created' | 'exists' | 'not-repo' | 'no-attributes' | 'kept' | 'kept-no-attributes' | 'failed' | 'half'
+
+/** What /plan init did, how many of this machine's entries are in plan/log.jsonl because of it, and that file's path. */
+export type InitResult = { outcome: InitOutcome; lines: number; path: string }
+
+const entryCount = (text: string): number => text.split('\n').filter(line => line.trim() !== '').length
+
 /**
  * What /plan init does: plan/log.jsonl gets the local text, the local copy goes away and .gitattributes gets its line.
  * The local copy is read again before it goes: lines it gained meanwhile are added to plan/log.jsonl (the ones already
  * there stay, as with merge=union, and a line another session adds meanwhile is not overwritten), up to 3 times.
  * `'exists'`: the repo already has the file, so nothing was touched.
+ * `'not-repo'`: the root is not a git worktree's top folder, so nothing was touched and the plan stays on this machine.
  * `'kept'`: the local copy kept changing, so it was not deleted.
  * `'kept-no-attributes'`: the same, and .gitattributes could not be brought up to date either.
  * `'failed'`: plan/log.jsonl could not be made; nothing changed.
  * `'half'`: plan/log.jsonl was made, but a later step failed.
+ * `lines` counts this machine's entries that are in plan/log.jsonl now: 0 when nothing was written or there was no local plan.
  */
-export async function initRepo($: Files, store: Store, root: string): Promise<'created' | 'exists' | 'no-attributes' | 'kept' | 'kept-no-attributes' | 'failed' | 'half'> {
+export async function initRepo($: Files, store: Store, root: string): Promise<InitResult> {
+  const path = logPath(root)
   let isWritten = false
+  let seen = ''
+  const result = (outcome: InitOutcome): InitResult => ({ outcome, lines: isWritten ? entryCount(seen) : 0, path })
   try {
-    if (await $.fs.exists(logPath(root))) return 'exists'
-    let seen = await readStored(store, root)
-    await $.fs.write(logPath(root), seen)
+    if (await $.fs.exists(path)) return result('exists')
+    // Only a worktree's top folder: a root cached before a repo was made around it would put plan/ in a subfolder.
+    if ((await toplevel($, root)) !== slashed(root)) return result('not-repo')
+    seen = await readStored(store, root)
+    await $.fs.write(path, seen)
     isWritten = true
     let isDeleted = false
     for (let check = 0; check < TRIES && !isDeleted; check++) {
@@ -234,11 +257,11 @@ export async function initRepo($: Files, store: Store, root: string): Promise<'c
     try {
       await ensureAttributes($, root)
     } catch {
-      return isDeleted ? 'no-attributes' : 'kept-no-attributes'
+      return result(isDeleted ? 'no-attributes' : 'kept-no-attributes')
     }
-    return isDeleted ? 'created' : 'kept'
+    return result(isDeleted ? 'created' : 'kept')
   } catch {
-    return isWritten ? 'half' : 'failed'
+    return result(isWritten ? 'half' : 'failed')
   }
 }
 

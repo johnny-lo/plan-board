@@ -168,7 +168,32 @@ test('local_mode_concurrent_write_retries_then_fails', async ($, on) => {
   expect(storedLines(w).at(-1)).toContain('card.open')
 })
 
-test('plan_init_moves_the_local_log_into_the_repo_unchanged', async ($, on) => {
+test('shell_cd_and_reload_keep_the_plan', async ($, on) => {
+  // The session starts in a folder that is not a git repo, so its plan is kept on this machine.
+  const w = world(on)
+  w.root = '/work'
+  w.cwd = '/work'
+  w.gitRoots = ['/work/api']
+  const text = await logText([entry('item.add', { item: item('A', 'Setup') }), entry('step.add', { item: 'A', step: { id: 'S1', title: 'Push' } })])
+  w.store.set('log:/work', text)
+  await $.session.start({ cwd: '/work' })
+
+  // A shell cd into a repo below it, then a reload: the plan is still the one the session started with.
+  w.cwd = '/work/api'
+  await $.session.start({ cwd: '/work/api' })
+  const res = await $.tool.call({ tool: tool('update_step'), ops: [{ action: 'note', item: 'A', step: 'S1', note: 'still here' }] })
+  expect(res.deny).toBeUndefined()
+  const lines = String(w.store.get('log:/work')).split('\n').filter(Boolean)
+  expect(lines.length).toBe(3)
+  expect(JSON.parse(lines[2]).kind).toBe('step.note')
+  expect([...w.store.keys()].filter(key => key.startsWith('log:'))).toEqual(['log:/work'])
+  expect(Object.keys(w.files)).toEqual([])
+  const summary = await summaryOf($)
+  expect(summary).toContain(LOCAL_LINE)
+  expect(summary).toContain('Setup')
+})
+
+test('plan_init_reply_counts_lines_and_names_the_file', async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
   await propose($)
@@ -187,8 +212,9 @@ test('plan_init_moves_the_local_log_into_the_repo_unchanged', async ($, on) => {
   expect(w.store.has(STORED)).toBe(false)
   expect(w.files[ATTRIBUTES]).toBe('* text=auto\nplan/log.jsonl merge=union\n')
   expect(w.opened).toEqual([])
-  expect(ran.text).toBeDefined()
-  expect(ran.text).toContain('plan/log.jsonl')
+  const moved = w.files[LOG].split('\n').filter(Boolean).length
+  expect(moved).toBe(2)
+  expect(ran.text).toContain(`Plan moved into ${LOG} (entries moved: ${moved})`)
   expect(ran.text).not.toMatch(ID)
   expect(ran.text).not.toContain('\n')
 
@@ -204,14 +230,89 @@ test('plan_init_moves_the_local_log_into_the_repo_unchanged', async ($, on) => {
   expect(w.store.has(STORED)).toBe(false)
 })
 
-test('plan_init_without_a_local_plan_creates_an_empty_repo_log', async ($, on) => {
+test('plan_init_without_a_local_plan_creates_an_empty_repo_log_and_says_it_moved_nothing', async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
   const ran = await $.command.run({ command: 'plan', args: 'init' })
   expect(w.files[LOG]).toBe('')
   expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
-  expect(ran.text).toContain('plan/log.jsonl')
+  expect(ran.text).toContain(`Created an empty plan at ${LOG}; no entries were moved`)
+  expect(ran.text).not.toContain('Plan moved')
   expect(await summaryOf($)).toContain(REPO_LINE)
+})
+
+test('plan_init_without_a_local_plan_says_it_moved_nothing_in_zh_tw', ZH, async ($, on) => {
+  const w = world(on)
+  await $.session.start({ cwd: '/repo' })
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  expect(w.files[LOG]).toBe('')
+  expect(ran.text).toContain(`在 ${LOG} 建了空的計畫，沒有搬任何紀錄`)
+  expect(ran.text).not.toContain('已搬進')
+})
+
+test('plan_init_without_a_local_plan_tells_about_gitattributes_when_that_fails', async ($, on) => {
+  const w = world(on)
+  await $.session.start({ cwd: '/repo' })
+  w.failWrites = '.gitattributes'
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  expect(w.files[LOG]).toBe('')
+  expect(ATTRIBUTES in w.files).toBe(false)
+  expect(ran.text).toContain(`Created an empty plan at ${LOG}; no entries were moved`)
+  expect(ran.text).toContain('plan/log.jsonl merge=union')
+  expect(ran.text).not.toContain('\n')
+})
+
+// The session starts in `root`, which is in no git repo; `between` runs after the start and before /plan init.
+async function initOutsideARepo($: Engine, w: World, root = '/work', between: () => void = () => {}): Promise<string> {
+  w.root = root
+  w.cwd = root
+  const stored = await logText([entry('item.add', { item: item('A', 'Setup') })])
+  w.store.set(`log:${root}`, stored)
+  await $.session.start({ cwd: root })
+  between()
+  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  // No plan/, no .gitattributes, and the plan on this machine is still there and still read.
+  expect(Object.keys(w.files)).toEqual([])
+  expect(w.store.get(`log:${root}`)).toBe(stored)
+  const summary = await summaryOf($)
+  expect(summary).toContain(LOCAL_LINE)
+  expect(summary).toContain('Setup')
+  expect(ran.text).not.toContain('\n')
+  return ran.text as string
+}
+
+test('plan_init_outside_a_git_repo_changes_nothing', async ($, on) => {
+  const text = await initOutsideARepo($, world(on))
+  expect(text).toContain('Nothing changed')
+  expect(text).toContain('/work is not a git repo')
+  expect(text).toContain('stays on this machine')
+})
+
+test('plan_init_outside_a_git_repo_changes_nothing_in_zh_tw', ZH, async ($, on) => {
+  const text = await initOutsideARepo($, world(on))
+  expect(text).toContain('什麼都沒改')
+  expect(text).toContain('/work 不是 git repo')
+  expect(text).toContain('計畫留在這台電腦')
+})
+
+test('plan_init_checks_git_at_the_root_not_at_the_cwd', async ($, on) => {
+  // The root is not a git repo; the shell is in a repo below it when /plan init runs.
+  const w = world(on)
+  w.gitRoots = ['/work/api']
+  const text = await initOutsideARepo($, w, '/work', () => {
+    w.cwd = '/work/api'
+  })
+  expect(text).toContain('/work is not a git repo')
+})
+
+test('plan_init_in_a_folder_inside_a_repo_changes_nothing', async ($, on) => {
+  // The session started in a folder that was in no repo; then a repo was made around it, so the root is now inside one.
+  const w = world(on)
+  const text = await initOutsideARepo($, w, '/work/api/sub', () => {
+    w.gitRoots = ['/work/api']
+  })
+  expect(text).toContain('Nothing changed')
+  expect(text).toContain('/work/api/sub is not a git repo')
 })
 
 test('plan_init_in_a_repo_with_a_log_changes_nothing_and_says_so', async ($, on) => {
@@ -224,7 +325,7 @@ test('plan_init_in_a_repo_with_a_log_changes_nothing_and_says_so', async ($, on)
   expect(ATTRIBUTES in w.files).toBe(false)
   expect(w.store.get(STORED)).toBe('left over\n')
   expect(w.opened).toEqual([])
-  expect(ran.text).toContain('already')
+  expect(ran.text).toContain(`already keeps its plan in ${LOG}`)
   expect(ran.text).toContain('nothing changed')
   expect(ran.text).not.toMatch(ID)
 })
@@ -234,11 +335,13 @@ test('plan_init_answers_in_zh_tw', ZH, async ($, on) => {
   await $.session.start({ cwd: '/repo' })
   await propose($)
   const made = await $.command.run({ command: 'plan', args: 'init' })
-  expect(made.text).toContain('plan/log.jsonl')
+  const moved = w.files[LOG].split('\n').filter(Boolean).length
+  expect(moved).toBe(1)
+  expect(made.text).toContain(`計畫已搬進 ${LOG}（${moved} 筆紀錄）`)
   expect(made.text).not.toMatch(/[a-z]{4,} [a-z]{4,}/)
   expect(made.text).not.toMatch(ID)
-  expect(w.files[LOG]).not.toBe('')
   const again = await $.command.run({ command: 'plan', args: 'init' })
+  expect(again.text).toContain(`已經把計畫存在 ${LOG}`)
   expect(again.text).toContain('什麼都沒改')
 })
 
@@ -312,7 +415,8 @@ test('plan_init_adds_the_lines_the_local_log_gained_before_deleting_it', async (
   expect(w.files[LOG]).toBe(one + two + four + three)
   expect(w.store.has(STORED)).toBe(false)
   expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
-  expect(ran.text).toContain('moved into the repo')
+  // All four local entries are in plan/log.jsonl now: two copied, one added, one already there.
+  expect(ran.text).toContain(`Plan moved into ${LOG} (entries moved: 4)`)
   expect(ran.text).not.toMatch(ID)
   expect(ran.text).not.toContain('\n')
 })
@@ -341,7 +445,7 @@ test('plan_init_keeps_the_local_log_while_another_session_keeps_writing', async 
   expect(w.store.get(STORED)).toBe(lines.slice(0, 4).join(''))
   expect(w.files[LOG]).toBe(lines.slice(0, 4).join(''))
   expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
-  expect(text).toContain('moved into plan/log.jsonl')
+  expect(text).toContain(`moved into ${LOG} (entries moved: 4)`)
   expect(text).toContain('another session kept writing')
   expect(text).toContain('kept')
   expect(text).not.toMatch(ID)
@@ -354,7 +458,7 @@ test('plan_init_keeps_the_local_log_while_another_session_keeps_writing_in_zh_tw
   expect(w.store.get(STORED)).toBe(lines.slice(0, 4).join(''))
   expect(w.files[LOG]).toBe(lines.slice(0, 4).join(''))
   expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
-  expect(text).toContain('計畫已搬進 plan/log.jsonl')
+  expect(text).toContain(`計畫已搬進 ${LOG}（4 筆紀錄）`)
   expect(text).toContain('別的 session 一直在寫本機那份')
   expect(text).toContain('先留著沒刪')
   expect(text).not.toMatch(ID)
@@ -383,7 +487,8 @@ test('plan_init_keeps_a_line_that_lands_in_plan_log_between_its_merge_read_and_w
   const ran = await $.command.run({ command: 'plan', args: 'init' })
   expect(w.files[LOG]).toBe(one + three + two)
   expect(w.store.has(STORED)).toBe(false)
-  expect(ran.text).toContain('moved into the repo')
+  // The count is this machine's entries; the line the other session wrote is not one of them.
+  expect(ran.text).toContain(`Plan moved into ${LOG} (entries moved: 2)`)
 })
 
 test('plan_init_tells_about_gitattributes_when_it_keeps_the_local_log_and_that_fails_too', async ($, on) => {
@@ -424,7 +529,7 @@ async function initThatCannotWrite($: Engine, w: World): Promise<string> {
 
 test('plan_init_says_nothing_changed_when_plan_log_cannot_be_written', async ($, on) => {
   const text = await initThatCannotWrite($, world(on))
-  expect(text).toContain('Could not move the plan')
+  expect(text).toContain(`Could not move the plan into ${LOG}`)
   expect(text).toContain('nothing was changed')
   expect(text).toContain('still on this machine')
 })
@@ -452,13 +557,13 @@ async function initWhoseDeleteFails($: Engine, w: World): Promise<string> {
 
 test('plan_init_says_the_local_copy_is_still_there_when_a_later_step_fails', async ($, on) => {
   const text = await initWhoseDeleteFails($, world(on))
-  expect(text).toContain('moved into plan/log.jsonl')
+  expect(text).toContain(`moved into ${LOG} (entries moved: 1)`)
   expect(text).toContain('copy on this machine is still there')
 })
 
 test('plan_init_says_the_local_copy_is_still_there_when_a_later_step_fails_in_zh_tw', ZH, async ($, on) => {
   const text = await initWhoseDeleteFails($, world(on))
-  expect(text).toContain('計畫已搬進 plan/log.jsonl')
+  expect(text).toContain(`計畫已搬進 ${LOG}（1 筆紀錄）`)
   expect(text).toContain('本機那份還留著')
 })
 
