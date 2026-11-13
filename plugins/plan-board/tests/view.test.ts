@@ -350,15 +350,43 @@ test('summary_shows_repos_and_their_short_names', async () => {
     ]),
   )
   const out = summary(plan, emptyLocal)
-  expect(out).toContain('- [s1] s1 — todo, repo: post_backend_eruncard (ERC後端)\n')
-  expect(out).toContain('- [s2] s2 — todo, repo: auth-center\n')
-  expect(out).toContain('- [s3] s3 — todo\n')
+  expect(out).toContain('- [s1] s1 — todo, repo: post_backend_eruncard (ERC後端), no detail\n')
+  expect(out).toContain('- [s2] s2 — todo, repo: auth-center, no detail\n')
+  expect(out).toContain('- [s3] s3 — todo, no detail\n')
   expect(out).toContain('Repo names: post_backend_eruncard = ERC後端, thoth = Thoth')
   const bare = await replay(await logText([entry('item.add', { item: item('A') }), step('A', 's1')]))
   expect(summary(bare, emptyLocal)).not.toContain('Repo names')
 })
 
-test('repo_label_is_the_short_name_else_the_folder', async () => {
+test('summary_marks_steps_without_a_detail', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 's1' }, status: 'doing', detail: '先把格式定下來' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 's2' }, status: 'doing' }),
+      entry('step.add', { item: 'A', step: { id: 's3', title: 's3' }, status: 'done', result: 'ok' }),
+    ]),
+  )
+  const out = summary(plan, emptyLocal)
+  expect(out).toContain('- [s1] s1 — doing\n')
+  expect(out).toContain('- [s2] s2 — doing, no detail\n')
+  // s3 is the last row, so the summary ends right after it: no newline to match.
+  expect(out.endsWith('- [s3] s3 — done, result: ok')).toBe(true)
+  expect(out).not.toContain('先把格式定下來')
+})
+
+test('guide_explains_details', () => {
+  expect(GUIDE).toContain('its detail explains it: what it does for the user, how you will know it is done')
+  expect(GUIDE).toContain('Put explanations in details, not only in a spec or HTML page')
+  expect(GUIDE).toContain('why_detail (update_step)')
+  expect(GUIDE).toContain('what choosing it means in practice')
+  expect(GUIDE).toContain('why the user has to do this and what happens once it is done')
+  expect(GUIDE).toContain('what the plan will look like once the user approves')
+  expect(GUIDE).toContain('within 400 cells')
+  expect(GUIDE).toContain('no markdown')
+})
+
+test('repo_label_is_the_short_name_else_the_folder',async () => {
   const plan = await replay(await logText([entry('repo.name', { repo: 'post_backend_eruncard', name: 'ERC後端' })]))
   expect(repoLabel(plan, 'post_backend_eruncard')).toBe('ERC後端')
   expect(repoLabel(plan, 'auth-center')).toBe('auth-center')
