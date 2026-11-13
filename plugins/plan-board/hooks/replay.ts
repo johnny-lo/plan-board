@@ -1,5 +1,6 @@
-import type { Entry, Plan, Step, Storage } from '../types'
+import type { CardSpec, Entry, Plan, Step, Storage } from '../types'
 import { checkLine } from './checksum.ts'
+import { normalizeDetail } from './detail.ts'
 
 /** A map without a prototype, so ids such as 'constructor' or '__proto__' are plain keys. */
 const table = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
@@ -62,10 +63,11 @@ function isCardSpec(v: unknown): boolean {
     isOptString(v.item) &&
     isOptString(v.step) &&
     isOptString(v.command) &&
+    isOptString(v.detail) &&
     isString(v.question) &&
     isString(v.why) &&
     Array.isArray(v.options) &&
-    v.options.every((o) => isObject(o) && isString(o.label) && isString(o.effect))
+    v.options.every((o) => isObject(o) && isString(o.label) && isString(o.effect) && isOptString(o.detail))
   )
 }
 
@@ -99,7 +101,8 @@ function hasValidData(entry: Entry): boolean {
         isOptString(d.to) &&
         isOptString(d.note) &&
         isOptString(d.result) &&
-        isOptString(d.repo)
+        isOptString(d.repo) &&
+        isOptString(d.detail)
       )
     case 'step.edit':
       return isString(d.step) && isString(d.title)
@@ -115,6 +118,8 @@ function hasValidData(entry: Entry): boolean {
       return isString(d.step) && isString(d.note)
     case 'step.repo':
       return isString(d.step) && isString(d.repo)
+    case 'step.detail':
+      return isString(d.step) && isString(d.detail)
     case 'repo.name':
       return isString(d.repo) && d.repo.trim() !== '' && isString(d.name)
     case 'card.open':
@@ -127,6 +132,22 @@ function hasValidData(entry: Entry): boolean {
     default:
       return true
   }
+}
+
+/** A copy of the card with every detail normalized; an empty one is dropped, and the entry's own data stays as written. */
+function normalizedCard(card: CardSpec): CardSpec {
+  const { detail, options, ...rest } = card
+  const copy: CardSpec = {
+    ...rest,
+    options: options.map((option) => {
+      const { detail: optionDetail, ...others } = option
+      const written = optionDetail === undefined ? '' : normalizeDetail(optionDetail)
+      return written === '' ? others : { ...others, detail: written }
+    }),
+  }
+  const written = detail === undefined ? '' : normalizeDetail(detail)
+  if (written !== '') copy.detail = written
+  return copy
 }
 
 /** Applies one entry to the plan. Returns null when applied, otherwise why it was skipped; a skipped entry leaves the plan untouched. */
@@ -216,7 +237,7 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       return null
     }
     case 'step.add': {
-      const { item, step, after, status, to, note, result, repo } = entry.data
+      const { item, step, after, status, to, note, result, repo, detail } = entry.data
       if (!has(plan.items, item)) return `unknown item: ${item}`
       if (has(plan.steps, step.id)) return `step exists: ${step.id}`
       const added: Step = { id: step.id, item, title: step.title, status: status ?? 'todo' }
@@ -224,6 +245,8 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       if (repo !== undefined && repo !== '') added.repo = repo
       if (added.status === 'done') added.evidence = proofOf(entry, result)
       else if (note !== undefined && note !== '') added.note = note
+      const written = detail === undefined ? '' : normalizeDetail(detail)
+      if (written !== '') added.detail = written
       plan.steps[step.id] = added
       insertStep(plan, item, step.id, after)
       plan.names[step.id] = step.title
@@ -285,6 +308,13 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
       else plan.steps[step].repo = repo
       return null
     }
+    case 'step.detail': {
+      const { step, detail } = entry.data
+      if (!has(plan.steps, step)) return `unknown step: ${step}`
+      const written = normalizeDetail(detail)
+      if (written !== '') plan.steps[step].detail = written
+      return null
+    }
     case 'repo.name': {
       const { repo, name } = entry.data
       if (name === '') delete plan.repoNames[repo]
@@ -294,7 +324,7 @@ export function applyEntry(plan: Plan, entry: Entry): string | null {
     case 'card.open': {
       const { card } = entry.data
       if (has(plan.cards, card.id)) return `card exists: ${card.id}`
-      plan.cards[card.id] = { ...card, openedAt: entry.at }
+      plan.cards[card.id] = { ...normalizedCard(card), openedAt: entry.at }
       plan.names[card.id] = card.question
       return null
     }
@@ -358,7 +388,8 @@ function wellFormed(entry: Entry): boolean {
     typeof e.kind === 'string' &&
     typeof e.why === 'string' &&
     isObject(e.basis) &&
-    isObject(e.data)
+    isObject(e.data) &&
+    (e.detail === undefined || typeof e.detail === 'string')
   )
 }
 
@@ -393,6 +424,11 @@ export async function replay(text: string, storage: Storage = 'repo'): Promise<P
     }
     if (seen.has(entry.id)) continue
     seen.add(entry.id)
+    if (entry.detail !== undefined) {
+      const written = normalizeDetail(entry.detail)
+      if (written === '') delete entry.detail
+      else entry.detail = written
+    }
     entries.push(entry)
   }
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
@@ -411,8 +447,8 @@ export async function replay(text: string, storage: Storage = 'repo'): Promise<P
       continue
     }
     plan.applied.push(entry)
-    // A note is where a step stands now, not a change the user reads back.
-    if (entry.kind === 'step.note') continue
+    // A note is where a step stands now, and a detail is its explanation; neither is a change the user reads back.
+    if (entry.kind === 'step.note' || entry.kind === 'step.detail') continue
     for (const id of new Set([...before, ...touchedAfter(entry)])) (plan.itemLog[id] ??= []).push(entry)
   }
   return plan

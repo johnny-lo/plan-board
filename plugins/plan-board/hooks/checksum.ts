@@ -7,13 +7,14 @@ export async function sha16(text: string): Promise<string> {
   return hex.slice(0, 16)
 }
 
-const sumOf = (e: { id: unknown; at: unknown; kind: unknown; why: unknown; basis: unknown; data: unknown }) =>
-  sha16(JSON.stringify({ id: e.id, at: e.at, kind: e.kind, why: e.why, basis: e.basis, data: e.data }))
+/** `detail` comes after `data` and is left out when undefined, so a line sealed before details existed keeps its sum. */
+const sumOf = (e: { id: unknown; at: unknown; kind: unknown; why: unknown; basis: unknown; data: unknown; detail?: unknown }) =>
+  sha16(JSON.stringify({ id: e.id, at: e.at, kind: e.kind, why: e.why, basis: e.basis, data: e.data, detail: e.detail }))
 
 export async function sealEntry(entry: Entry): Promise<string> {
   const sum = await sumOf(entry)
-  const { id, at, kind, why, basis, data } = entry
-  return JSON.stringify({ id, at, kind, why, basis, data, sum })
+  const { id, at, kind, why, basis, data, detail } = entry
+  return JSON.stringify({ id, at, kind, why, basis, data, detail, sum })
 }
 
 export async function checkLine(raw: string): Promise<{ entry: Entry | null; isSealed: boolean; hash: string }> {

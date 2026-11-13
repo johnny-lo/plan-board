@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { replay } from '../hooks/replay.ts'
+import { applyEntry, replay } from '../hooks/replay.ts'
 import { entry, logText } from './fixtures.ts'
 
 const item = (id: string, title = id, goal = `${id} goal`) => ({ id, title, goal })
@@ -355,4 +355,137 @@ test('logs_without_repos_replay_the_same', async () => {
   expect(plan.steps.s1).toEqual({ id: 's1', item: 'A', title: 'one', status: 'doing', assignee: 'claude-b' })
   expect(plan.steps.s2).toEqual({ id: 's2', item: 'A', title: 'two', status: 'done', evidence: { result: 'ok' } })
   expect(Object.values(plan.steps).some((s) => Object.hasOwn(s, 'repo'))).toBe(false)
+})
+
+const A = 'A'
+const addStep = (id: string, extra: Record<string, unknown> = {}, title = id) =>
+  entry('step.add', { item: A, step: { id, title }, ...extra })
+
+test('details_replay_normalized_on_steps_options_cards_and_entries', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('design01') }),
+      entry('step.add', { item: 'design01', step: { id: 's1', title: 'one' }, detail: '  第一行\r\n\r\n\r\n第二\t行 ' }),
+      entry('step.add', { item: 'design01', step: { id: 's2', title: 'two' }, detail: '\u0007  ' }),
+      entry('step.add', { item: 'design01', step: { id: 's3', title: 'three' }, detail: 'x'.repeat(500) }),
+      entry('step.add', { item: 'design01', step: { id: 's4', title: 'four' }, detail: '**粗體** `code`' }),
+      entry('step.add', { item: 'design01', step: { id: 's5', title: 'five' }, detail: 'five.' }),
+      entry('step.add', { item: 'design01', step: { id: 's6', title: 'six' }, detail: '看 design01' }),
+      entry('step.add', { item: 'design01', step: { id: 's7', title: 'seven' }, detail: '​⁠' }),
+      entry('card.open', {
+        card: {
+          id: 'q1',
+          type: 'question',
+          question: 'which',
+          why: 'need it',
+          options: [
+            { label: 'a', effect: 'x', detail: ' 選 a 會怎樣 ' },
+            { label: 'b', effect: 'y' },
+          ],
+        },
+      }),
+      entry('card.open', { card: { id: 'a1', type: 'action', question: 'do it', why: 'needed', options: [], detail: '為什麼要你做' } }),
+      entry('step.status', { step: 's1', status: 'doing' }, { detail: '  原因的細節  ' }),
+    ]),
+  )
+  expect(plan.skipped).toEqual([])
+  expect(plan.flagged).toEqual([])
+  expect(plan.steps.s1.detail).toBe('第一行\n\n第二 行')
+  expect(Object.hasOwn(plan.steps.s2, 'detail')).toBe(false)
+  expect(Object.hasOwn(plan.steps.s7, 'detail')).toBe(false)
+  // Replay checks no length, repeat or id: what was written is what shows.
+  expect(plan.steps.s3.detail).toBe('x'.repeat(500))
+  expect(plan.steps.s4.detail).toBe('**粗體** `code`')
+  expect(plan.steps.s5.detail).toBe('five.')
+  expect(plan.steps.s6.detail).toBe('看 design01')
+  expect(plan.cards.q1.options[0].detail).toBe('選 a 會怎樣')
+  expect(Object.hasOwn(plan.cards.q1.options[1], 'detail')).toBe(false)
+  expect(plan.cards.a1.detail).toBe('為什麼要你做')
+  expect(plan.applied.find((e) => e.kind === 'step.status')?.detail).toBe('原因的細節')
+})
+
+test('a_detail_that_is_not_a_string_skips_the_entry', async () => {
+  const plan = await replay(await logText([entry('item.add', { item: item(A) }), addStep('s1')]))
+  const bad = [
+    addStep('s2', { detail: 5 }),
+    entry('card.open', { card: { id: 'q1', type: 'question', question: 'which', why: 'need', options: [{ label: 'a', effect: 'x', detail: 5 }] } }),
+    entry('card.open', { card: { id: 'a1', type: 'action', question: 'do it', why: 'needed', options: [], detail: 5 } }),
+    entry('step.detail', { step: 's1', detail: 5 }),
+  ]
+  const before = JSON.stringify(plan)
+  for (const e of bad) {
+    expect(applyEntry(plan, e)).toBe(`malformed entry: bad data for ${e.kind}`)
+    expect(JSON.stringify(plan)).toBe(before)
+  }
+
+  const sealed = await logText([
+    entry('item.add', { item: item(A) }),
+    entry('step.add', { item: A, step: { id: 's3', title: 'three' } }, { detail: 5 as never }),
+  ])
+  const outer = await replay(sealed)
+  expect(outer.skipped).toHaveLength(1)
+  expect(outer.skipped[0].reason).toBe('malformed entry')
+  expect(outer.flagged).toEqual([])
+  expect(Object.hasOwn(outer.steps, 's3')).toBe(false)
+})
+
+test('step_detail_replaces_and_stays_off_the_history', async () => {
+  const plan = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('item.add', { item: item('B') }),
+      addStep('s1', {}, 'one'),
+      entry('step.detail', { step: 's1', detail: '第一版' }),
+      entry('step.detail', { step: 's1', detail: '第二版' }),
+      entry('step.detail', { step: 's1', detail: '  ' }),
+      entry('step.edit', { step: 's1', title: 'uno' }),
+      entry('step.move', { step: 's1', item: 'B' }),
+      entry('step.detail', { step: 'ghost', detail: 'x' }),
+    ]),
+  )
+  expect(plan.steps.s1.detail).toBe('第二版')
+  expect(plan.skipped.map((s) => s.reason)).toEqual(['unknown step: ghost'])
+  expect(plan.applied.filter((e) => e.kind === 'step.detail')).toHaveLength(3)
+  expect([...(plan.itemLog.A ?? []), ...(plan.itemLog.B ?? [])].some((e) => e.kind === 'step.detail')).toBe(false)
+})
+
+test('old_and_new_lines_are_never_flagged', async () => {
+  const old = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, status: 'doing', to: 'claude-b' }),
+      entry('step.add', { item: 'A', step: { id: 's2', title: 'two' } }),
+      entry('step.status', { step: 's2', status: 'done', result: 'ok' }),
+    ]),
+  )
+  expect(old.flagged).toEqual([])
+  expect(Object.values(old.steps).some((s) => Object.hasOwn(s, 'detail'))).toBe(false)
+
+  const fresh = await replay(
+    await logText([
+      entry('item.add', { item: item('A') }),
+      entry('step.add', { item: 'A', step: { id: 's1', title: 'one' }, detail: '做什麼\n怎麼知道做完' }),
+      entry('step.detail', { step: 's1', detail: '改過的細節' }),
+      entry('card.open', {
+        card: {
+          id: 'q1',
+          type: 'question',
+          question: 'which',
+          why: 'need',
+          options: [{ label: 'a', effect: 'x', detail: '選 a 會怎樣' }],
+        },
+      }),
+      entry('card.open', { card: { id: 'a1', type: 'action', question: 'do it', why: 'needed', options: [], detail: '為什麼要你做' } }),
+      entry('step.status', { step: 's1', status: 'doing' }, { detail: '原因的細節' }),
+    ]),
+  )
+  expect(fresh.flagged).toEqual([])
+  expect(fresh.skipped).toEqual([])
+})
+
+test('crlf_lines_with_multiline_details_stay_sealed', async () => {
+  const text = (await logText([entry('item.add', { item: item('A') }), addStep('s1', { detail: '一\n二\r\n三' })])).replace(/\n/g, '\r\n')
+  const plan = await replay(text)
+  expect(plan.flagged).toEqual([])
+  expect(plan.steps.s1.detail).toBe('一\n二\n三')
 })
