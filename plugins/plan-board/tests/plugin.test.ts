@@ -189,3 +189,45 @@ test('a_refused_detail_writes_nothing', async ($, on) => {
   const plan = await replay(w.files[LOG])
   expect(Object.values(plan.steps).find((s) => s.title === 'first')?.detail).toBe(D)
 })
+
+const withStep = () =>
+  seeded(
+    entry('item.add', { item: item('A', 'Setup') }),
+    entry('step.add', { item: 'A', step: { id: 's1', title: 'Old title' } }),
+    entry('step.detail', { step: 's1', detail: 'The first explanation' }),
+  )
+
+test('a_second_detail_op_with_the_same_text_in_one_call_is_refused', async ($, on) => {
+  const w = world(on, await withStep())
+  await $.session.start({ cwd: '/repo' })
+  const before = w.files[LOG]
+  const detail = { action: 'detail', step: 's1', detail: 'Another explanation' }
+  const refused = await $.tool.call({ tool: tool('update_step'), why: 'clarify', ops: [detail, detail] })
+  expect(String(refused.deny)).toContain('step s1 already has this detail')
+  expect(w.files[LOG]).toBe(before)
+  // One detail op alone is written, so the refusal above came from the op before it in the same call.
+  const once = await $.tool.call({ tool: tool('update_step'), why: 'clarify', ops: [detail] })
+  expect(once.deny).toBeUndefined()
+  expect((await replay(w.files[LOG])).steps.s1.detail).toBe('Another explanation')
+})
+
+test('a_detail_that_repeats_a_title_renamed_earlier_in_the_call_is_refused', async ($, on) => {
+  const w = world(on, await withStep())
+  await $.session.start({ cwd: '/repo' })
+  const before = w.files[LOG]
+  const refused = await $.tool.call({
+    tool: tool('update_step'),
+    why: 'rename',
+    ops: [
+      { action: 'edit', step: 's1', title: 'New title' },
+      { action: 'detail', step: 's1', detail: 'New title.' },
+    ],
+  })
+  expect(String(refused.deny)).toContain('ops[1].detail only repeats the title; say what it leaves out')
+  expect(w.files[LOG]).toBe(before)
+  // Against the old title the same text says more, so it is the rename that makes it a repeat.
+  const alone = await $.tool.call({ tool: tool('update_step'), why: 'rename', ops: [{ action: 'detail', step: 's1', detail: 'New title.' }] })
+  expect(alone.deny).toBeUndefined()
+  const plan = await replay(w.files[LOG])
+  expect(plan.steps.s1).toMatchObject({ title: 'Old title', detail: 'New title.' })
+})

@@ -257,7 +257,18 @@ const updateStep = guard((ctx, input) => {
   const said: string[] = []
   // Short names as this call leaves them, so two ops of one call cannot give two repos the same name.
   const names: Record<string, string> = Object.assign(Object.create(null), ctx.plan.repoNames)
+  // The plan as the ops before this one leave it, so each detail is checked against the current detail, title and ids of that moment.
+  // An entry that does not apply leaves it as it was; accept reports that entry's problem for the whole call.
+  const state = clonePlan(ctx.plan)
+  let isApplying = true
   ops.forEach((raw, i) => {
+    const start = entries.length
+    updateOp(raw, i)
+    for (const e of entries.slice(start)) {
+      if (isApplying) isApplying = (positionProblem(state, e) ?? applyEntry(state, e)) === null
+    }
+  })
+  function updateOp(raw: unknown, i: number): void {
     if (!isObj(raw)) return fail(`ops[${i}] must be an object`)
     const at = `ops[${i}]`
     const field = (name: string): string => text(raw, name)
@@ -271,7 +282,7 @@ const updateStep = guard((ctx, input) => {
         const item = field('item')
         const title = field('title')
         const detail =
-          detailOf(raw, 'detail', `${at}.detail`, [{ name: 'title', text: title }], ctx.plan) ??
+          detailOf(raw, 'detail', `${at}.detail`, [{ name: 'title', text: title }], state) ??
           fail(`${at}.detail is required on add: what this step does and how you will know it is done`)
         const data: Obj = { item, step: { id, title }, detail }
         if (after !== undefined) data.after = after
@@ -295,11 +306,12 @@ const updateStep = guard((ctx, input) => {
       }
       case 'detail': {
         const stepId = field('step')
-        if (!has(ctx.plan.steps, stepId)) return fail(`unknown step: ${stepId}`)
+        // Only steps that existed before the call: the caller cannot know the id an add of this call gives.
+        if (!has(ctx.plan.steps, stepId) || !has(state.steps, stepId)) return fail(`unknown step: ${stepId}`)
         const detail =
-          detailOf(raw, 'detail', `${at}.detail`, [{ name: 'title', text: ctx.plan.steps[stepId].title }], ctx.plan) ??
+          detailOf(raw, 'detail', `${at}.detail`, [{ name: 'title', text: state.steps[stepId].title }], state) ??
           fail(`${at}.detail must be a non-empty string; a detail can be replaced, not cleared`)
-        if (ctx.plan.steps[stepId].detail === detail) return fail(`step ${stepId} already has this detail`)
+        if (state.steps[stepId].detail === detail) return fail(`step ${stepId} already has this detail`)
         entries.push(make(ctx, 'step.detail', { step: stepId, detail }, why || 'detail written', ai))
         said.push(`Wrote the detail of step ${stepId}.`)
         break
@@ -376,7 +388,7 @@ const updateStep = guard((ctx, input) => {
       default:
         return fail(`${at}.action must be one of add, edit, remove, move, assign, status, note, repo, repo_name, link, detail`)
     }
-  })
+  }
   const sealed = whyDetail === undefined ? entries : entries.map((e) => ({ ...e, detail: whyDetail }) as Entry)
   return accept(ctx, sealed, said.join(' '))
 })
