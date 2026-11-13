@@ -3,10 +3,12 @@ import type { Engine } from 'claude-code/testing'
 
 import { checkLine } from '../hooks/checksum.ts'
 import { nextText } from '../hooks/logfile.ts'
+import { replay } from '../hooks/replay.ts'
 import { entry, logText } from './fixtures.ts'
 import { world } from './world.ts'
 
 const LOG = '/repo/plan/log.jsonl'
+const D = '說明這一步替使用者做什麼、怎樣算做完'
 const ATTRIBUTES = '/repo/.gitattributes'
 const tool = (name: string) => `mcp__plan-board__${name}`
 const item = (id: string, title = id, goal = `${id} goal`) => ({ id, title, goal })
@@ -146,7 +148,7 @@ test('calls_in_the_same_millisecond_replay_in_call_order', async ($, on) => {
   const w = world(on, await seeded(entry('item.add', { item: item('A', 'Setup') })))
   w.clockStep = 0
   await $.session.start({ cwd: '/repo' })
-  const added = await $.tool.call({ tool: tool('update_step'), why: 'plan', ops: [{ action: 'add', item: 'A', title: 'first' }] })
+  const added = await $.tool.call({ tool: tool('update_step'), why: 'plan', ops: [{ action: 'add', item: 'A', title: 'first', detail: D }] })
   const stepId = /step (\w{8})/.exec(String(added.result))?.[1]
   expect(stepId).toBeDefined()
   for (let i = 1; i <= 8; i++) {
@@ -173,4 +175,17 @@ test('a_failed_gitattributes_write_does_not_undo_the_entries', async ($, on) => 
   expect(ATTRIBUTES in w.files).toBe(false)
   // The entries were committed: the plugin already knows the card.
   expect(await summaryOf($)).toContain('Add docs?')
+})
+
+test('a_refused_detail_writes_nothing', async ($, on) => {
+  const w = world(on, await seeded(entry('item.add', { item: item('A', 'Setup') })))
+  await $.session.start({ cwd: '/repo' })
+  const before = w.files[LOG]
+  const refused = await $.tool.call({ tool: tool('update_step'), why: 'plan', ops: [{ action: 'add', item: 'A', title: 'first' }] })
+  expect(String(refused.deny)).toContain('ops[0].detail is required')
+  expect(w.files[LOG]).toBe(before)
+  const allowed = await $.tool.call({ tool: tool('update_step'), why: 'plan', ops: [{ action: 'add', item: 'A', title: 'first', detail: D }] })
+  expect(allowed.deny).toBeUndefined()
+  const plan = await replay(w.files[LOG])
+  expect(Object.values(plan.steps).find((s) => s.title === 'first')?.detail).toBe(D)
 })

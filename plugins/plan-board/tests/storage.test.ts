@@ -9,6 +9,7 @@ import { world } from './world.ts'
 import type { World } from './world.ts'
 
 const LOG = '/repo/plan/log.jsonl'
+const D = '說明這一步替使用者做什麼、怎樣算做完'
 const ATTRIBUTES = '/repo/.gitattributes'
 const STORED = 'log:/repo'
 const REPO_LINE = 'Plan storage: repo (plan/log.jsonl)'
@@ -70,7 +71,7 @@ test('every_tool_works_in_local_mode', async ($, on) => {
     tool: tool('update_step'),
     why: 'plan the work',
     ops: [
-      { action: 'add', item: itemId, title: 'write README' },
+      { action: 'add', item: itemId, title: 'write README', detail: D },
       { action: 'link', item: itemId, doc: 'docs/superpowers/plans/docs.md' },
     ],
   })

@@ -1,4 +1,6 @@
 import type { Basis, Change, Entry, Plan, StepStatus } from '../types'
+import { detailProblem, normalizeDetail } from './detail.ts'
+import type { Title } from './detail.ts'
 import { applyEntry } from './replay.ts'
 
 export type ToolName = 'propose_change' | 'apply_change' | 'update_step' | 'add_decision' | 'add_user_action' | 'resolve_decision' | 'resolve_direct_edit'
@@ -100,8 +102,22 @@ function firstProblem(plan: Plan, entries: Entry[]): string | null {
   return null
 }
 
-function make(ctx: ToolContext, kind: Change['kind'], data: unknown, why: string, basis: Basis): Entry {
-  return { id: ctx.newId(12), at: ctx.now, kind, why, basis, data } as Entry
+function make(ctx: ToolContext, kind: Change['kind'], data: unknown, why: string, basis: Basis, detail?: string): Entry {
+  const e = { id: ctx.newId(12), at: ctx.now, kind, why, basis, data } as Entry
+  if (detail !== undefined) e.detail = detail
+  return e
+}
+
+/** The detail at o[key]: not a string → `${field} must be a string`; normalized; '' → undefined; otherwise the call fails with detailProblem(field, …). */
+function detailOf(o: Obj, key: string, field: string, titles: Title[], plan: Plan): string | undefined {
+  const v = o[key]
+  if (v === undefined) return undefined
+  if (typeof v !== 'string') return fail(`${field} must be a string`)
+  const detail = normalizeDetail(v)
+  if (detail === '') return undefined
+  const problem = detailProblem(field, detail, titles, plan)
+  if (problem !== null) return fail(problem)
+  return detail
 }
 
 /** Validates the entries against the plan; they are what gets written, the i-th one i ms after ctx.now so replay keeps their order. */
@@ -230,10 +246,12 @@ const updateStep = guard((ctx, input) => {
   const o = objectOf(input)
   if (o.evidence !== undefined) return fail('evidence now goes on the op that marks the step done: ops[i].evidence')
   const ops = list(o, 'ops')
-  const isNotesOnly = ops.every((raw) => isObj(raw) && raw.action === 'note')
+  const isNotesOnly = ops.every((raw) => isObj(raw) && (raw.action === 'note' || raw.action === 'detail'))
   const isBlank = o.why === undefined || (typeof o.why === 'string' && o.why.trim() === '')
   // A call that only notes where steps stand may leave out why: each note is its own reason.
   const why = isNotesOnly && isBlank ? '' : text(o, 'why')
+  if (typeof o.why_detail === 'string' && normalizeDetail(o.why_detail) !== '' && why.trim() === '') return fail('why_detail needs a why')
+  const whyDetail = detailOf(o, 'why_detail', 'why_detail', [{ name: 'why', text: why }], ctx.plan)
   const entries: Entry[] = []
   const said: string[] = []
   // Short names as this call leaves them, so two ops of one call cannot give two repos the same name.
@@ -245,11 +263,16 @@ const updateStep = guard((ctx, input) => {
     const after = optText(raw, 'after')
     const isDone = (raw.action === 'status' || raw.action === 'add') && raw.status === 'done'
     if (raw.evidence !== undefined && !isDone) return fail(`${at}: evidence goes only on an op that sets status done`)
+    if (raw.detail !== undefined && raw.action !== 'add' && raw.action !== 'detail') return fail(`${at}: detail goes only on an add or a detail op`)
     switch (raw.action) {
       case 'add': {
         const id = ctx.newId(8)
         const item = field('item')
-        const data: Obj = { item, step: { id, title: field('title') } }
+        const title = field('title')
+        const detail =
+          detailOf(raw, 'detail', `${at}.detail`, [{ name: 'title', text: title }], ctx.plan) ??
+          fail(`${at}.detail is required on add: what this step does and how you will know it is done`)
+        const data: Obj = { item, step: { id, title }, detail }
         if (after !== undefined) data.after = after
         const status = statusOf(raw, at)
         const to = optText(raw, 'to')
@@ -267,6 +290,17 @@ const updateStep = guard((ctx, input) => {
           (part) => part !== '',
         )
         said.push(`Added step ${id} to item ${item}${how.length > 0 ? ` (${how.join(', ')})` : ''}.`)
+        break
+      }
+      case 'detail': {
+        const stepId = field('step')
+        if (!has(ctx.plan.steps, stepId)) return fail(`unknown step: ${stepId}`)
+        const detail =
+          detailOf(raw, 'detail', `${at}.detail`, [{ name: 'title', text: ctx.plan.steps[stepId].title }], ctx.plan) ??
+          fail(`${at}.detail must be a non-empty string; a detail can be replaced, not cleared`)
+        if (ctx.plan.steps[stepId].detail === detail) return fail(`step ${stepId} already has this detail`)
+        entries.push(make(ctx, 'step.detail', { step: stepId, detail }, why || 'detail written', ai))
+        said.push(`Wrote the detail of step ${stepId}.`)
         break
       }
       case 'edit':
@@ -339,10 +373,11 @@ const updateStep = guard((ctx, input) => {
         break
       }
       default:
-        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, note, repo, repo_name, link`)
+        return fail(`${at}.action must be one of add, edit, remove, move, assign, status, note, repo, repo_name, link, detail`)
     }
   })
-  return accept(ctx, entries, said.join(' '))
+  const sealed = whyDetail === undefined ? entries : entries.map((e) => ({ ...e, detail: whyDetail }) as Entry)
+  return accept(ctx, sealed, said.join(' '))
 })
 
 // ---- add_decision ----
@@ -476,13 +511,23 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
     inputSchema: {
       type: 'object',
       properties: {
-        why: { ...str, description: 'One-line reason for the change; may be left out when every op is a note.' },
+        why: { ...str, description: 'One-line reason for the change; may be left out when every op is a note or a detail.' },
+        why_detail: {
+          ...str,
+          description:
+            'Optional longer explanation of the why, shown when the user opens the change log entry; needs a why, plain text, within 400 cells (about 200 Chinese characters) and 8 lines, and must say more than the why.',
+        },
         ops: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'note', 'repo', 'repo_name', 'link'] },
+              action: { type: 'string', enum: ['add', 'edit', 'remove', 'move', 'assign', 'status', 'note', 'repo', 'repo_name', 'link', 'detail'] },
+              detail: {
+                ...str,
+                description:
+                  'Required on add, and the text of a detail op (replaces the step detail, never clears it): what this step does and how you will know it is done. Plain text within 400 cells (about 200 Chinese characters) and 8 lines; must say more than the title and name no plan ids.',
+              },
               item: str,
               doc: { ...str, description: 'For link: path of the document from the repo root.' },
               step: str,

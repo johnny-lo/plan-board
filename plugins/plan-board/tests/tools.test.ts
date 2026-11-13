@@ -9,6 +9,7 @@ import { entry, logText } from './fixtures.ts'
 import type { Entry, Plan } from '../types'
 
 const NOW = '2026-10-08T00:00:00.000Z'
+const D = '說明這一步替使用者做什麼、怎樣算做完'
 const HEX8 = /^[0-9a-f]{8}$/
 const item = (id: string, title = id, goal = `${id} goal`) => ({ id, title, goal })
 const step = (it: string, id: string, title = id): Entry => entry('step.add', { item: it, step: { id, title } })
@@ -171,7 +172,7 @@ test('update_step_needs_evidence_for_done', async () => {
   expect(bad(run([{ action: 'remove', step: 's1' }], { evidence: 'done' }))).toContain('evidence')
 
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'status', step: 'zzz', status: 'doing' }] }))).toContain('unknown step')
-  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'add', item: 'zzz', title: 't' }] }))).toContain('unknown item')
+  expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'add', item: 'zzz', title: 't', detail: D }] }))).toContain('unknown item')
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: '', ops: [{ action: 'remove', step: 's1' }] }))).toContain('why')
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [] }))).toContain('ops')
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [{ action: 'dance', step: 's1' }] }))).toContain('action')
@@ -182,7 +183,7 @@ test('update_step_needs_evidence_for_done', async () => {
     TOOLS.update_step.run(ctxOf(plan), {
       why: 'reshuffle',
       ops: [
-        { action: 'add', item: 'A', title: 'new step', after: 's1' },
+        { action: 'add', item: 'A', title: 'new step', after: 's1', detail: D },
         { action: 'edit', step: 's1', title: 'renamed' },
         { action: 'move', step: 's2', item: 'B' },
         { action: 'assign', step: 's1', to: 'claude-b' },
@@ -195,7 +196,7 @@ test('update_step_needs_evidence_for_done', async () => {
   const added = many.entries[0]
   if (added.kind !== 'step.add') throw new Error('unreachable')
   expect(added.data.step.id).toMatch(HEX8)
-  expect(added.data).toEqual({ item: 'A', step: { id: added.data.step.id, title: 'new step' }, after: 's1' })
+  expect(added.data).toEqual({ item: 'A', step: { id: added.data.step.id, title: 'new step' }, after: 's1', detail: D })
   expect(many.message).toContain(added.data.step.id)
   expect(many.message).toContain('A')
   expect(new Set(many.entries.map((e) => e.id)).size).toBe(6)
@@ -349,9 +350,9 @@ test('positions_must_exist', async () => {
   good(TOOLS.propose_change.run(ctxOf(plan), { question: 'q', why: 'w', changes: add('B') }))
 
   const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'x', ops: [op] })
-  expect(bad(run({ action: 'add', item: 'A', title: 't', after: 'ghost' }))).toContain('after')
-  expect(bad(run({ action: 'add', item: 'A', title: 't', after: 's2' }))).toContain('after')
-  good(run({ action: 'add', item: 'A', title: 't', after: 's1' }))
+  expect(bad(run({ action: 'add', item: 'A', title: 't', after: 'ghost', detail: D }))).toContain('after')
+  expect(bad(run({ action: 'add', item: 'A', title: 't', after: 's2', detail: D }))).toContain('after')
+  good(run({ action: 'add', item: 'A', title: 't', after: 's1', detail: D }))
   expect(bad(run({ action: 'move', step: 's1', item: 'B', after: 'ghost' }))).toContain('after')
   expect(bad(run({ action: 'move', step: 's1', item: 'B', after: 'ghost' }))).toContain('ghost')
   expect(bad(run({ action: 'move', step: 's1', item: 'B', after: 's1' }))).toContain('after')
@@ -445,7 +446,7 @@ test('evidence_belongs_to_the_op_that_marks_done', async () => {
     run([
       { action: 'edit', step: 's2', title: 'renamed' },
       { action: 'status', step: 's1', status: 'done', evidence: { thoth: 'T1' } },
-      { action: 'add', item: 'A', title: 'new' },
+      { action: 'add', item: 'A', title: 'new', detail: D },
       { action: 'status', step: 's2', status: 'doing' },
     ]),
   )
@@ -461,24 +462,24 @@ test('evidence_belongs_to_the_op_that_marks_done', async () => {
 test('add_sets_status_assignee_and_note_in_one_entry', async () => {
   const base = [entry('item.add', { item: item('A') })]
   const plan = await planOf(base)
-  const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title: 'review', ...op }] })
+  const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title: 'review', detail: D, ...op }] })
 
   const added = good(run({ status: 'doing', to: 'claude-b', note: ' waiting for review ' }))
   expect(added.entries.length).toBe(1)
   const id = (added.entries[0].data as { step: { id: string } }).step.id
-  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'review' }, status: 'doing', to: 'claude-b', note: 'waiting for review' })
+  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'review' }, detail: D, status: 'doing', to: 'claude-b', note: 'waiting for review' })
   expect(added.message).toContain('(doing, assigned to claude-b)')
   const after = await replay(await nextText(await logText(base), added.entries, []))
-  expect(after.steps[id]).toEqual({ id, item: 'A', title: 'review', status: 'doing', assignee: 'claude-b', note: 'waiting for review' })
+  expect(after.steps[id]).toEqual({ id, item: 'A', title: 'review', status: 'doing', assignee: 'claude-b', note: 'waiting for review', detail: D })
 
   const done = good(run({ status: 'done', evidence: { thoth: 'T9' } }))
   expect(done.entries[0].basis).toEqual({ type: 'thoth', task: 'T9' })
-  expect(done.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, status: 'done' })
+  expect(done.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, detail: D, status: 'done' })
   const reported = good(run({ status: 'done', evidence: { result: 'already merged' } }))
-  expect(reported.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, status: 'done', result: 'already merged' })
+  expect(reported.entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, detail: D, status: 'done', result: 'already merged' })
 
   // todo and an empty assignee are what a plain add means; they are not written.
-  expect(good(run({ status: 'todo', to: '' })).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' } })
+  expect(good(run({ status: 'todo', to: '' })).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'review' }, detail: D })
   expect(bad(run({ status: 'done' }))).toContain('evidence')
   expect(bad(run({ status: 'done', note: 'x', evidence: { result: 'ok' } }))).toContain('no note')
   expect(bad(run({ status: 'doing', evidence: { result: 'ok' } }))).toContain('only on an op that sets status done')
@@ -536,21 +537,21 @@ test('repo_op_and_add_repo_tag_steps', async () => {
   expect(tagged.message).toContain('s1')
   expect(good(run([{ action: 'repo', step: 's1', repo: '   ' }])).entries[0].data).toEqual({ step: 's1', repo: '' })
 
-  const added = good(run([{ action: 'add', item: 'A', title: 'check tokens', status: 'doing', repo: ' auth-center ' }]))
+  const added = good(run([{ action: 'add', item: 'A', title: 'check tokens', detail: D, status: 'doing', repo: ' auth-center ' }]))
   expect(added.entries.length).toBe(1)
   const id = (added.entries[0].data as { step: { id: string } }).step.id
-  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'check tokens' }, status: 'doing', repo: 'auth-center' })
+  expect(added.entries[0].data).toEqual({ item: 'A', step: { id, title: 'check tokens' }, detail: D, status: 'doing', repo: 'auth-center' })
   expect(added.message).toContain('(doing, repo auth-center)')
   const after = await replay(await nextText(await logText(base), added.entries, []))
   expect(after.steps[id].repo).toBe('auth-center')
 
   // An empty or blank repo on add is the same as none.
   for (const repo of ['', '   ']) {
-    expect(good(run([{ action: 'add', item: 'A', title: 'x', repo }])).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'x' } })
+    expect(good(run([{ action: 'add', item: 'A', title: 'x', detail: D, repo }])).entries[0].data).toEqual({ item: 'A', step: { id: expect.any(String), title: 'x' }, detail: D })
   }
   expect(bad(run([{ action: 'repo', step: 's1' }]))).toContain('repo')
   expect(bad(run([{ action: 'repo', step: 'ghost', repo: 'x' }]))).toContain('unknown step')
-  expect(bad(run([{ action: 'add', item: 'A', title: 'x', repo: 3 }]))).toContain('repo')
+  expect(bad(run([{ action: 'add', item: 'A', title: 'x', detail: D, repo: 3 }]))).toContain('repo')
   // A tag is no note: why is still needed.
   expect(bad(TOOLS.update_step.run(ctxOf(plan), { ops: [{ action: 'repo', step: 's1', repo: 'x' }] }))).toContain('why')
   expect(bad(run([{ action: 'tag' }]))).toContain('add, edit, remove, move, assign, status, note, repo, repo_name, link')
@@ -602,7 +603,7 @@ test('repo_name_refuses_a_name_another_repo_has', async () => {
   const before = good(
     run([
       { action: 'repo_name', repo: 'thoth', name: 'Thoth' },
-      { action: 'add', item: 'A', title: 'dispatch', repo: 'thoth' },
+      { action: 'add', item: 'A', title: 'dispatch', detail: D, repo: 'thoth' },
     ]),
   )
   expect(before.entries.map((e) => e.kind)).toEqual(['repo.name', 'step.add'])
@@ -621,4 +622,107 @@ test('keeping_flagged_repo_lines_needs_no_card', async () => {
   const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')], tail + '\n')
   expect(plan.flagged.length).toBe(2)
   good(TOOLS.resolve_direct_edit.run(ctxOf(plan), { action: 'keep', summary: 'a repo tag and a short name' }))
+})
+
+const REQUIRED = 'ops[0].detail is required on add: what this step does and how you will know it is done'
+
+test('add_needs_a_detail_and_writes_it_normalized', async () => {
+  const base = [entry('item.add', { item: item('A') })]
+  const plan = await planOf(base)
+  const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title: 'review', ...op }] })
+  expect(bad(run({}))).toBe(REQUIRED)
+  expect(bad(run({ detail: '  \u0007 ' }))).toContain('ops[0].detail is required')
+  expect(bad(run({ detail: '​‍' }))).toContain('ops[0].detail is required')
+  expect(bad(run({ detail: 5 }))).toBe('ops[0].detail must be a string')
+
+  const written = good(run({ detail: '  第一行\r\n\r\n\r\n第二\t行 ' }))
+  expect(written.entries[0].data).toMatchObject({ detail: '第一行\n\n第二 行' })
+  const id = (written.entries[0].data as { step: { id: string } }).step.id
+  const after = await replay(await nextText(await logText(base), written.entries, []))
+  expect(after.steps[id].detail).toBe('第一行\n\n第二 行')
+  expect(good(run({ detail: '**先**做 `x`' })).entries[0].data).toMatchObject({ detail: '**先**做 `x`' })
+})
+
+test('add_detail_limits_are_200_chinese_400_letters_8_lines', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') })])
+  const run = (detail: string) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title: 'review', detail }] })
+  good(run('中'.repeat(200)))
+  expect(bad(run('中'.repeat(201)))).toContain('ops[0].detail is 402 cells wide')
+  good(run('a'.repeat(400)))
+  expect(bad(run('a'.repeat(401)))).toContain('401 cells wide')
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n')
+  good(run(lines(8)))
+  expect(bad(run(lines(9)))).toContain('ops[0].detail is 9 lines long')
+})
+
+test('a_detail_that_repeats_the_title_or_names_ids_is_refused', async () => {
+  const plan = await planOf([entry('item.add', { item: item('design01') }), entry('item.add', { item: item('docs') })])
+  const run = (title: string, detail: string) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'docs', title, detail }] })
+  expect(bad(run('窗格兩個畫面', '窗格 兩個畫面。'))).toBe('ops[0].detail only repeats the title; say what it leaves out')
+  expect(bad(run('Pane views', 'pane views.'))).toContain('only repeats the title')
+  expect(bad(run('t', '先做 design01 的部分'))).toBe('ops[0].detail names plan ids (design01); use the names the user sees')
+  good(run('t', 'design012 和 design01_x 都不是'))
+  good(run('t', '舊的 ghost123 不在計畫裡'))
+  good(run('t', '寫 docs 的時候順便更新'))
+})
+
+test('detail_goes_only_on_add_or_detail_ops', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')])
+  const run = (op: object) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [op] })
+  const ops = [
+    { action: 'edit', step: 's1', title: 'renamed' },
+    { action: 'note', step: 's1', note: 'waiting' },
+    { action: 'status', step: 's1', status: 'doing' },
+    { action: 'remove', step: 's1' },
+  ]
+  for (const op of ops) expect(bad(run({ ...op, detail: D }))).toBe('ops[0]: detail goes only on an add or a detail op')
+})
+
+test('detail_op_replaces_but_never_clears', async () => {
+  const base = [entry('item.add', { item: item('A') }), step('A', 's1', '定檔案格式'), entry('step.detail', { step: 's1', detail: '舊的細節' })]
+  const plan = await planOf(base)
+  const call = (ops: object[]) => TOOLS.update_step.run(ctxOf(plan), { ops })
+  const detail = (text: string) => ({ action: 'detail', step: 's1', detail: text })
+
+  const done = good(call([detail(' 新的細節 ')]))
+  expect(done.entries[0]).toMatchObject({ kind: 'step.detail', why: 'detail written', data: { step: 's1', detail: '新的細節' } })
+  expect(done.message).toBe('Wrote the detail of step s1.')
+  const after = await replay(await nextText(await logText(base), done.entries, []))
+  expect(after.steps.s1.detail).toBe('新的細節')
+
+  expect(bad(call([detail('  ')]))).toBe('ops[0].detail must be a non-empty string; a detail can be replaced, not cleared')
+  expect(bad(call([detail('舊的細節')]))).toBe('step s1 already has this detail')
+  expect(bad(call([{ action: 'detail', step: 'ghost', detail: '新的細節' }]))).toContain('unknown step: ghost')
+  const mixed = good(call([{ action: 'note', step: 's1', note: '等審查' }, detail('新的細節')]))
+  expect(mixed.entries.map((e) => e.why)).toEqual(['等審查', 'detail written'])
+  expect(bad(call([{ action: 'remove', step: 's1' }, detail('新的細節')]))).toContain('why')
+})
+
+test('why_detail_goes_on_every_entry_of_the_call', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')])
+  const call = (input: object) => TOOLS.update_step.run(ctxOf(plan), input)
+  const added = { action: 'add', item: 'A', title: 'new', detail: D }
+
+  const sealed = good(call({ why: '換做法', why_detail: ' 舊做法太慢，\n改成先建索引 ', ops: [added, { action: 'status', step: 's1', status: 'doing' }] }))
+  expect(sealed.entries.map((e) => e.detail)).toEqual(['舊做法太慢，\n改成先建索引', '舊做法太慢，\n改成先建索引'])
+
+  expect(bad(call({ why_detail: '補充', ops: [{ action: 'note', step: 's1', note: 'x' }] }))).toBe('why_detail needs a why')
+  expect(bad(call({ why: '換做法', why_detail: '換做法。', ops: [added] }))).toBe('why_detail only repeats the why; say what it leaves out')
+  expect(bad(call({ why: '換做法', why_detail: 5, ops: [added] }))).toBe('why_detail must be a string')
+  for (const blank of [{ why_detail: '  ' }, {}]) {
+    const plain = good(call({ why: '換做法', ops: [added], ...blank }))
+    expect(Object.hasOwn(plain.entries[0], 'detail')).toBe(false)
+  }
+  const schema = JSON.stringify(TOOLS.update_step.inputSchema)
+  expect(schema).toContain('"why_detail"')
+  expect(schema).toContain('"detail"')
+})
+
+test('a_detail_that_starts_with_the_title_and_says_more_is_kept', async () => {
+  const plan = await planOf([entry('item.add', { item: item('A') })])
+  const run = (title: string, detail: string) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title, detail }] })
+  const zh = good(run('窗格兩個畫面', '窗格兩個畫面：上方兩個按鈕切換總表和等你'))
+  expect(zh.entries[0].data).toMatchObject({ detail: '窗格兩個畫面：上方兩個按鈕切換總表和等你' })
+  const en = good(run('Pane views', 'Pane views. Two buttons switch between them.'))
+  expect(en.entries[0].data).toMatchObject({ detail: 'Pane views. Two buttons switch between them.' })
 })

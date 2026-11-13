@@ -19,6 +19,7 @@ const LOG = '/repo/plan/log.jsonl'
 const LOCAL = 'local:/repo'
 const tool = (name: string) => `mcp__plan-board__${name}`
 const ID = /[0-9a-f]{8}/
+const STEP_DETAIL = '說明這一步替使用者做什麼、怎樣算做完'
 /** What the engine itself draws in the band when the plugin passes. */
 const ENGINE_BAND = { type: 'Text', children: ['engine band'] } as const
 
@@ -1502,7 +1503,7 @@ test('an_open_fold_stays_open_when_more_step_chatter_arrives', ZH, async ($, on)
     await ui.press({ key: `item:${B}` })
     await ui.press({ key: `log:${B}` })
     await ui.press({ key: fold })
-    await $.tool.call({ tool: tool('update_step'), why: '多一步', ops: [{ action: 'add', item: B, title: `補測試 ${surface}` }] })
+    await $.tool.call({ tool: tool('update_step'), why: '多一步', ops: [{ action: 'add', item: B, title: `補測試 ${surface}`, detail: STEP_DETAIL }] })
     expect((await ui.find({ type: 'Button', key: fold }))?.text).toContain('▾ 步驟：')
     expect(await ui.find({ type: 'Button', text: new RegExp(`新增「補測試 ${surface}」`) })).toBeDefined()
     await ui.unmount()
