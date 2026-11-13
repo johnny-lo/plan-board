@@ -9,6 +9,7 @@ import { world } from './world.ts'
 
 const LOG = '/repo/plan/log.jsonl'
 const D = '說明這一步替使用者做什麼、怎樣算做完'
+const OD = '選了之後實際會怎麼做'
 const ATTRIBUTES = '/repo/.gitattributes'
 const tool = (name: string) => `mcp__plan-board__${name}`
 const item = (id: string, title = id, goal = `${id} goal`) => ({ id, title, goal })
@@ -40,7 +41,7 @@ test('first_proposal_creates_log_and_gitattributes', async ($, on) => {
     tool: tool('add_decision'),
     question: 'Which cache?',
     why: 'it matters',
-    options: [{ label: 'LRU', effect: 'small' }, { label: 'TTL', effect: 'simple' }],
+    options: [{ label: 'LRU', effect: 'small', detail: OD }, { label: 'TTL', effect: 'simple', detail: OD }],
   })
   expect(w.files[LOG].split('\n').length).toBe(3)
   expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
@@ -188,6 +189,40 @@ test('a_refused_detail_writes_nothing', async ($, on) => {
   expect(allowed.deny).toBeUndefined()
   const plan = await replay(w.files[LOG])
   expect(Object.values(plan.steps).find((s) => s.title === 'first')?.detail).toBe(D)
+})
+
+test('a_refused_card_or_resolution_detail_writes_nothing', async ($, on) => {
+  const w = world(
+    on,
+    await seeded(
+      entry('item.add', { item: item('A', 'Setup') }),
+      entry('card.open', {
+        card: { id: 'q1', type: 'question', question: 'Which cache?', why: 'w', options: [{ label: 'LRU', effect: 'small' }, { label: 'TTL', effect: 'simple' }] },
+      }),
+    ),
+  )
+  await $.session.start({ cwd: '/repo' })
+  const before = w.files[LOG]
+  const refusals: [Record<string, unknown>, string][] = [
+    [
+      { tool: tool('add_decision'), question: 'Which port?', why: 'it matters', options: [{ label: '80', effect: 'default', detail: OD }, { label: '8080', effect: 'no root' }] },
+      'options[1].detail is required: what choosing it means in practice',
+    ],
+    [{ tool: tool('add_user_action'), action: 'Log in to GitHub', why: 'the push needs it' }, 'detail is required: why the user has to do this'],
+    [{ tool: tool('propose_change'), question: 'Add docs?', why: 'users need them', changes: [addItem], detail: 'Users need them.' }, 'detail only repeats the why'],
+    [{ tool: tool('resolve_decision'), card: 'q1', outcome: 'LRU', detail: 'lru' }, 'detail only repeats the outcome'],
+    [{ tool: tool('resolve_direct_edit'), action: 'drop', summary: 'a stray line', detail: 7 }, 'detail must be a string'],
+  ]
+  for (const [input, message] of refusals) {
+    const refused = await $.tool.call(input as Parameters<Engine['tool']['call']>[0])
+    expect(String(refused.deny)).toContain(message)
+    expect(w.files[LOG]).toBe(before)
+  }
+  const allowed = await $.tool.call({ tool: tool('resolve_decision'), card: 'q1', outcome: 'LRU', detail: '記憶體夠用，之後再看命中率' })
+  expect(allowed.deny).toBeUndefined()
+  const plan = await replay(w.files[LOG])
+  expect(plan.cards.q1.resolved?.outcome).toBe('LRU')
+  expect(plan.applied[plan.applied.length - 1].detail).toBe('記憶體夠用，之後再看命中率')
 })
 
 const withStep = () =>

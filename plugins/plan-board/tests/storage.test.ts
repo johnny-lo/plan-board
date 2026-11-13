@@ -10,6 +10,7 @@ import type { World } from './world.ts'
 
 const LOG = '/repo/plan/log.jsonl'
 const D = '說明這一步替使用者做什麼、怎樣算做完'
+const OD = '選了之後實際會怎麼做'
 const ATTRIBUTES = '/repo/.gitattributes'
 const STORED = 'log:/repo'
 const REPO_LINE = 'Plan storage: repo (plan/log.jsonl)'
@@ -49,7 +50,7 @@ test('local_mode_keeps_the_log_in_the_store_and_never_creates_plan', async ($, o
     tool: tool('add_decision'),
     question: 'Which cache?',
     why: 'it matters',
-    options: [{ label: 'LRU', effect: 'small' }, { label: 'TTL', effect: 'simple' }],
+    options: [{ label: 'LRU', effect: 'small', detail: OD }, { label: 'TTL', effect: 'simple', detail: OD }],
   })
   expect(storedLines(w).length).toBe(2)
   await $.prompt.submit({ text: 'hello' })
@@ -80,7 +81,7 @@ test('every_tool_works_in_local_mode', async ($, on) => {
     tool: tool('add_decision'),
     question: 'Which language?',
     why: 'it matters',
-    options: [{ label: 'en', effect: 'English' }, { label: 'zh', effect: 'Chinese' }],
+    options: [{ label: 'en', effect: 'English', detail: OD }, { label: 'zh', effect: 'Chinese', detail: OD }],
   })
   const question = /card (\w{8})/.exec(String(asked.result))?.[1] as string
   const closed = await $.tool.call({ tool: tool('resolve_decision'), card: question, outcome: 'en' })
@@ -114,7 +115,7 @@ test('mode_is_decided_on_every_read', async ($, on) => {
     tool: tool('add_decision'),
     question: 'Which cache?',
     why: 'it matters',
-    options: [{ label: 'LRU', effect: 'small' }, { label: 'TTL', effect: 'simple' }],
+    options: [{ label: 'LRU', effect: 'small', detail: OD }, { label: 'TTL', effect: 'simple', detail: OD }],
   })
   expect(written.deny).toBeUndefined()
   expect(w.files[LOG].split('\n').filter(Boolean).length).toBe(2)
@@ -202,7 +203,7 @@ test('plan_init_reply_counts_lines_and_names_the_file', async ($, on) => {
     tool: tool('add_decision'),
     question: 'Which cache?',
     why: 'it matters',
-    options: [{ label: 'LRU', effect: 'small' }, { label: 'TTL', effect: 'simple' }],
+    options: [{ label: 'LRU', effect: 'small', detail: OD }, { label: 'TTL', effect: 'simple', detail: OD }],
   })
   const text = storedText(w)
   expect(text).not.toBe('')

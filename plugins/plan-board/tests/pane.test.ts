@@ -20,6 +20,8 @@ const LOCAL = 'local:/repo'
 const tool = (name: string) => `mcp__plan-board__${name}`
 const ID = /[0-9a-f]{8}/
 const STEP_DETAIL = '說明這一步替使用者做什麼、怎樣算做完'
+const OPTION_DETAIL = '選了之後實際會怎麼做'
+const ACTION_DETAIL = '說明為什麼要使用者自己來、做完之後會怎樣'
 /** What the engine itself draws in the band when the plugin passes. */
 const ENGINE_BAND = { type: 'Text', children: ['engine band'] } as const
 
@@ -72,7 +74,7 @@ const blockedOnS2 = () => question(Q1, { item: B, step: S2 })
 const loose = () => question(Q2, { question: '要不要加英文文件？', why: '使用者之前提過', options: [{ label: '加', effect: '多一份文件' }, { label: '不加', effect: '先不做' }] })
 const ACTION = '在終端機跑 thoth checks approve'
 const addAction = async ($: Engine, extra: Record<string, unknown> = {}) => {
-  const added = await $.tool.call({ tool: tool('add_user_action'), action: ACTION, why: '新的檢查要人核准才會跑', command: 'thoth checks approve', ...extra })
+  const added = await $.tool.call({ tool: tool('add_user_action'), action: ACTION, why: '新的檢查要人核准才會跑', command: 'thoth checks approve', detail: ACTION_DETAIL, ...extra })
   return /card (\w{8})/.exec(String(added.result))?.[1] as string
 }
 /** Repo folder names, as the AI tags steps with them; neither has 8 hex characters in a row, so ID does not take them for ids. */
@@ -244,7 +246,7 @@ test('blocking_card_sends_at_once', ZH, async ($, on) => {
       tool: tool('add_decision'),
       question: 'Install where?',
       why: '要先知道裝在哪',
-      options: [{ label: 'Here', effect: '在這個 repo' }, { label: 'There', effect: '在另一個 repo' }],
+      options: [{ label: 'Here', effect: '在這個 repo', detail: OPTION_DETAIL }, { label: 'There', effect: '在另一個 repo', detail: OPTION_DETAIL }],
       blocking: true,
     })
     const id = /card (\w{8})/.exec(String(added.result))?.[1] as string
@@ -264,7 +266,7 @@ test('blocking_card_sends_at_once', ZH, async ($, on) => {
       tool: tool('add_decision'),
       question: 'Which port?',
       why: '要先知道連接埠',
-      options: [{ label: '80', effect: '預設' }, { label: '8080', effect: '免權限' }],
+      options: [{ label: '80', effect: '預設', detail: OPTION_DETAIL }, { label: '8080', effect: '免權限', detail: OPTION_DETAIL }],
       blocking: true,
     })
     const second = /card (\w{8})/.exec(String(other.result))?.[1] as string
@@ -289,7 +291,7 @@ test('staged_choice_auto_sends_after_turn_end', ZH, async ($, on) => {
       tool: tool('add_decision'),
       question: text,
       why: '要先知道',
-      options: [{ label: a, effect: '一' }, { label: b, effect: '二' }],
+      options: [{ label: a, effect: '一', detail: OPTION_DETAIL }, { label: b, effect: '二', detail: OPTION_DETAIL }],
     })
     return /card (\w{8})/.exec(String(added.result))?.[1] as string
   }
@@ -344,7 +346,7 @@ test('dismiss_is_sent_as_skip', ZH, async ($, on) => {
       tool: tool('add_decision'),
       question: 'Which cache?',
       why: '要先知道',
-      options: [{ label: 'LRU', effect: '一' }, { label: 'TTL', effect: '二' }],
+      options: [{ label: 'LRU', effect: '一', detail: OPTION_DETAIL }, { label: 'TTL', effect: '二', detail: OPTION_DETAIL }],
     })
     const id = /card (\w{8})/.exec(String(added.result))?.[1] as string
     const ui = await pane($, surface)
@@ -874,7 +876,7 @@ const add = async ($: Engine, question: string, extra: Record<string, unknown> =
     tool: tool('add_decision'),
     question,
     why: '要先知道',
-    options: [{ label: 'LRU', effect: '一' }, { label: 'TTL', effect: '二' }],
+    options: [{ label: 'LRU', effect: '一', detail: OPTION_DETAIL }, { label: 'TTL', effect: '二', detail: OPTION_DETAIL }],
     ...extra,
   })
   return /card (\w{8})/.exec(String(added.result))?.[1] as string

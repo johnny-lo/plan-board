@@ -10,6 +10,9 @@ import type { Entry, Plan } from '../types'
 
 const NOW = '2026-10-08T00:00:00.000Z'
 const D = '說明這一步替使用者做什麼、怎樣算做完'
+/** An option's detail and an action card's detail that repeat no label, effect, action or why of the tests that use them. */
+const OD = '選了之後實際會怎麼做'
+const AD = '說明為什麼要使用者自己來、做完之後會怎樣'
 const HEX8 = /^[0-9a-f]{8}$/
 const item = (id: string, title = id, goal = `${id} goal`) => ({ id, title, goal })
 const step = (it: string, id: string, title = id): Entry => entry('step.add', { item: it, step: { id, title } })
@@ -205,7 +208,7 @@ test('update_step_needs_evidence_for_done', async () => {
 
 test('add_decision_checks_options', async () => {
   const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')])
-  const opt = (label: string, extra: Record<string, unknown> = {}) => ({ label, effect: `${label} leads on`, ...extra })
+  const opt = (label: string, extra: Record<string, unknown> = {}) => ({ label, effect: `${label} leads on`, detail: OD, ...extra })
   const base = { question: 'Where?', why: 'blocks the install step' }
 
   expect(bad(TOOLS.add_decision.run(ctxOf(plan), { ...base, options: [opt('a')] }))).toContain('options')
@@ -226,8 +229,8 @@ test('add_decision_checks_options', async () => {
   expect(open.data.card.item).toBe('A')
   expect(open.data.card.step).toBe('s1')
   expect(open.data.card.id).toMatch(HEX8)
-  expect(open.data.card.options[0]).toEqual({ label: 'a', effect: 'a leads on', recommended: true, reason: 'simplest' })
-  expect(open.data.card.options[1]).toEqual({ label: 'b', effect: 'b leads on' })
+  expect(open.data.card.options[0]).toEqual({ label: 'a', effect: 'a leads on', recommended: true, reason: 'simplest', detail: OD })
+  expect(open.data.card.options[1]).toEqual({ label: 'b', effect: 'b leads on', detail: OD })
   expect(result.message).toContain(open.data.card.id)
 
   const four = good(TOOLS.add_decision.run(ctxOf(plan), { ...base, options: [opt('a'), opt('b'), opt('c'), opt('d')], blocking: true }))
@@ -310,7 +313,16 @@ test('schemas_list_required_fields', () => {
   expect(required('update_step')).toEqual(['ops'])
   expect(required('resolve_decision')).toEqual(expect.arrayContaining(['card', 'outcome']))
   expect(required('resolve_direct_edit')).toEqual(expect.arrayContaining(['action', 'summary']))
-  expect(required('add_user_action')).toEqual(['action', 'why'])
+  expect(required('add_user_action')).toEqual(['action', 'why', 'detail'])
+  type Schema = { properties: Record<string, { description?: string; items?: Schema; required?: string[] }> }
+  const props = (name: keyof typeof TOOLS) => (TOOLS[name].inputSchema as Schema).properties
+  const option = props('add_decision').options.items as Schema & { required: string[] }
+  expect(option.required).toEqual(['label', 'effect', 'detail'])
+  const details = [option.properties.detail, ...(['propose_change', 'add_user_action', 'resolve_decision', 'resolve_direct_edit'] as const).map((n) => props(n).detail)]
+  for (const detail of details) expect(detail?.description?.length ?? 0).toBeGreaterThan(40)
+  expect(required('propose_change')).not.toContain('detail')
+  expect(required('resolve_decision')).not.toContain('detail')
+  expect(required('resolve_direct_edit')).not.toContain('detail')
   for (const tool of Object.values(TOOLS)) {
     expect(tool.description.length).toBeGreaterThan(10)
     expect((tool.inputSchema as { type: string }).type).toBe('object')
@@ -491,7 +503,7 @@ test('add_user_action_opens_an_action_card', async () => {
   const plan = await planOf([entry('item.add', { item: item('A') }), entry('item.add', { item: item('B') }), step('A', 's1')])
   const run = (input: object) => TOOLS.add_user_action.run(ctxOf(plan), input)
   const opened = good(
-    run({ action: 'Run thoth checks approve in your terminal', why: 'new checks need a human', command: 'thoth checks approve', item: 'A', step: 's1' }),
+    run({ action: 'Run thoth checks approve in your terminal', why: 'new checks need a human', command: 'thoth checks approve', item: 'A', step: 's1', detail: AD }),
   )
   expect(opened.entries.length).toBe(1)
   expect(opened.entries[0].kind).toBe('card.open')
@@ -505,14 +517,15 @@ test('add_user_action_opens_an_action_card', async () => {
     item: 'A',
     step: 's1',
     command: 'thoth checks approve',
+    detail: AD,
   })
   expect(card.id).toMatch(HEX8)
   expect(opened.message).toContain(`card ${card.id}`)
 
-  const bare = good(run({ action: 'Log in to GitHub', why: 'the push needs it' }))
-  expect((bare.entries[0].data as { card: object }).card).toEqual({ id: expect.any(String), type: 'action', question: 'Log in to GitHub', why: 'the push needs it', options: [] })
+  const bare = good(run({ action: 'Log in to GitHub', why: 'the push needs it', detail: AD }))
+  expect((bare.entries[0].data as { card: object }).card).toEqual({ id: expect.any(String), type: 'action', question: 'Log in to GitHub', why: 'the push needs it', options: [], detail: AD })
   // The step alone names its item.
-  expect((good(run({ action: 'x', why: 'y', step: 's1' })).entries[0].data as { card: { item?: string } }).card.item).toBe('A')
+  expect((good(run({ action: 'x', why: 'y', step: 's1', detail: AD })).entries[0].data as { card: { item?: string } }).card.item).toBe('A')
 
   expect(bad(run({ why: 'y' }))).toContain('action')
   expect(bad(run({ action: 'x' }))).toContain('why')
@@ -746,4 +759,146 @@ test('a_detail_that_starts_with_the_title_and_says_more_is_kept', async () => {
   const en = good(run('Pane views', 'Pane views. Two buttons switch between them.'))
   expect(en.entries[0].data).toMatchObject({ detail: 'Pane views. Two buttons switch between them.' })
   expect(await addedDetail(base, en)).toBe('Pane views. Two buttons switch between them.')
+})
+
+/** The card the first returned entry opens, as the replayed plan holds it. */
+async function openedCard(base: Entry[], result: Extract<ToolResult, { ok: true }>): Promise<Plan['cards'][string]> {
+  const id = (result.entries[0].data as { card: { id: string } }).card.id
+  return (await replayed(base, result)).cards[id]
+}
+/** The entries the replayed plan applied from the returned ones, in written order. */
+async function writtenEntries(base: Entry[], result: Extract<ToolResult, { ok: true }>): Promise<Entry[]> {
+  return (await replayed(base, result)).applied.slice(-result.entries.length)
+}
+
+test('add_decision_needs_a_detail_on_every_option', async () => {
+  const base = [entry('item.add', { item: item('A') })]
+  const plan = await planOf(base)
+  const opt = (label: string, extra: Record<string, unknown> = {}) => ({ label, effect: `${label} leads on`, detail: OD, ...extra })
+  const run = (options: unknown[]) => TOOLS.add_decision.run(ctxOf(plan), { question: 'Where?', why: 'blocks the install step', options })
+
+  expect(bad(run([opt('a'), { label: 'b', effect: 'y' }]))).toBe('options[1].detail is required: what choosing it means in practice')
+  expect(bad(run([opt('a', { detail: 3 }), opt('b')]))).toBe('options[0].detail must be a string')
+  expect(bad(run([opt('a', { detail: '  ​ ' }), opt('b')]))).toBe('options[0].detail is required: what choosing it means in practice')
+  expect(bad(run([opt('a', { detail: 'A leads on.' }), opt('b')]))).toContain('options[0].detail only repeats the effect')
+  expect(bad(run([opt('a', { detail: 'A.' }), opt('b')]))).toBe('options[0].detail only repeats the label; say what it leaves out')
+  // One option at a time, label then effect then detail: option 0's bad detail comes before option 1's missing effect.
+  expect(bad(run([opt('a', { detail: 5 }), { label: 'b' }]))).toBe('options[0].detail must be a string')
+  expect(bad(run([{ label: 'a', detail: 5 }, opt('b')]))).toContain('effect')
+  expect(bad(run([{ effect: 'x', detail: 5 }, opt('b')]))).toContain('label')
+
+  const written = good(run([opt('a', { detail: ' 選了就\r\n先做 a ' }), opt('b')]))
+  const open = written.entries[0]
+  if (open.kind !== 'card.open') throw new Error('unreachable')
+  expect(open.data.card.options[0].detail).toBe('選了就\n先做 a')
+  expect(Object.hasOwn(open, 'detail')).toBe(false)
+  const card = await openedCard(base, written)
+  expect(card.options.map((o) => o.detail)).toEqual(['選了就\n先做 a', OD])
+})
+
+test('add_user_action_needs_a_detail', async () => {
+  const base = [entry('item.add', { item: item('A') })]
+  const plan = await planOf(base)
+  const run = (input: object) => TOOLS.add_user_action.run(ctxOf(plan), { action: 'x', why: 'y', ...input })
+
+  expect(bad(run({}))).toBe('detail is required: why the user has to do this and what happens once it is done')
+  expect(bad(run({ detail: ' \t ' }))).toBe('detail is required: why the user has to do this and what happens once it is done')
+  expect(bad(run({ detail: 'Y.' }))).toBe('detail only repeats the why; say what it leaves out')
+  expect(bad(run({ detail: ' x! ' }))).toBe('detail only repeats the action; say what it leaves out')
+  expect(bad(run({ detail: 9 }))).toBe('detail must be a string')
+
+  const written = good(run({ detail: '  新的檢查要人核准，\r\n核准後 CI 會重跑 ' }))
+  const open = written.entries[0]
+  if (open.kind !== 'card.open') throw new Error('unreachable')
+  expect(open.data.card.detail).toBe('新的檢查要人核准，\n核准後 CI 會重跑')
+  expect(Object.hasOwn(open, 'detail')).toBe(false)
+  expect((await openedCard(base, written)).detail).toBe('新的檢查要人核准，\n核准後 CI 會重跑')
+})
+
+test('propose_change_takes_an_optional_detail', async () => {
+  const base = [entry('item.add', { item: item('design01') })]
+  const plan = await planOf(base)
+  const changes = [{ kind: 'item.add', data: { item: { title: 'Docs', goal: 'README exists' } } }]
+  const run = (extra: object) => TOOLS.propose_change.run(ctxOf(plan), { question: 'Add docs?', why: 'users need them', changes, ...extra })
+
+  const written = good(run({ detail: ' 同意之後多一個項目「文件」 ' }))
+  const open = written.entries[0]
+  if (open.kind !== 'card.open') throw new Error('unreachable')
+  expect(open.data.card.detail).toBe('同意之後多一個項目「文件」')
+  expect(Object.hasOwn(open, 'detail')).toBe(false)
+  expect((await openedCard(base, written)).detail).toBe('同意之後多一個項目「文件」')
+  const plain = good(run({ detail: '**先**看' }))
+  expect((plain.entries[0].data as { card: { detail?: string } }).card.detail).toBe('**先**看')
+  expect((await openedCard(base, plain)).detail).toBe('**先**看')
+
+  for (const blank of [{}, { detail: '  ' }, { detail: '​﻿' }]) {
+    const none = good(run(blank))
+    expect(Object.hasOwn((none.entries[0].data as { card: object }).card, 'detail')).toBe(false)
+    expect(Object.hasOwn(none.entries[0], 'detail')).toBe(false)
+    expect(Object.hasOwn(await openedCard(base, none), 'detail')).toBe(false)
+  }
+
+  expect(bad(run({ detail: '中'.repeat(201) }))).toBe(
+    'detail is 402 cells wide; keep it within 400 (about 200 Chinese characters). Put the rest in the spec and link it',
+  )
+  expect(bad(run({ detail: Array.from({ length: 9 }, (_, i) => `line ${i + 1}`).join('\n') }))).toBe(
+    'detail is 9 lines long; keep it within 8 lines. Put the rest in the spec and link it',
+  )
+  expect(bad(run({ detail: '影響 design01' }))).toContain('detail names plan ids (design01)')
+  expect(bad(run({ detail: 'Add docs' }))).toBe('detail only repeats the question; say what it leaves out')
+  expect(bad(run({ detail: 'Users need them!' }))).toBe('detail only repeats the why; say what it leaves out')
+  expect(bad(run({ detail: 7 }))).toBe('detail must be a string')
+})
+
+test('apply_change_copies_the_card_detail_to_every_entry', async () => {
+  const changes = [
+    { kind: 'item.add', data: { item: item('X1', 'Docs', 'README exists') } },
+    { kind: 'item.add', data: { item: item('X2', 'Guide', 'guide exists') } },
+  ]
+  const withDetail = [entry('item.add', { item: item('A') }), proposal('p1', changes, { detail: '同意之後多兩個項目' })]
+  const applied = good(TOOLS.apply_change.run(ctxOf(await planOf(withDetail), ['p1']), { card: 'p1' }))
+  expect(applied.entries.length).toBe(3)
+  expect(applied.entries.every((e) => e.detail === '同意之後多兩個項目')).toBe(true)
+  expect(applied.entries[2].kind).toBe('card.resolve')
+  const written = await writtenEntries(withDetail, applied)
+  expect(written.map((e) => [e.kind, e.detail])).toEqual([
+    ['item.add', '同意之後多兩個項目'],
+    ['item.add', '同意之後多兩個項目'],
+    ['card.resolve', '同意之後多兩個項目'],
+  ])
+
+  const bare = [entry('item.add', { item: item('A') }), proposal('p1', changes)]
+  const plain = good(TOOLS.apply_change.run(ctxOf(await planOf(bare), ['p1']), { card: 'p1' }))
+  expect(plain.entries.length).toBe(3)
+  expect(plain.entries.some((e) => Object.hasOwn(e, 'detail'))).toBe(false)
+  expect((await writtenEntries(bare, plain)).some((e) => Object.hasOwn(e, 'detail'))).toBe(false)
+})
+
+test('resolve_tools_take_an_optional_detail', async () => {
+  const base = [entry('item.add', { item: item('A') }), step('A', 's1'), question('q1')]
+  const plan = await planOf(base)
+  const resolve = (extra: object) => TOOLS.resolve_decision.run(ctxOf(plan), { card: 'q1', outcome: '選了 LRU', ...extra })
+
+  const decided = good(resolve({ detail: '記憶體夠用，\n之後再看命中率' }))
+  expect(decided.entries[0].detail).toBe('記憶體夠用，\n之後再看命中率')
+  expect((await writtenEntries(base, decided))[0].detail).toBe('記憶體夠用，\n之後再看命中率')
+  expect(bad(resolve({ detail: '選了LRU。' }))).toBe('detail only repeats the outcome; say what it leaves out')
+  expect(bad(resolve({ detail: 4 }))).toBe('detail must be a string')
+  for (const blank of [{}, { detail: ' \n ' }]) {
+    const none = good(resolve(blank))
+    expect(Object.hasOwn(none.entries[0], 'detail')).toBe(false)
+    expect(Object.hasOwn((await writtenEntries(base, none))[0], 'detail')).toBe(false)
+  }
+
+  const tail = (await logText([step('A', 's2')])).replace('"why":"test"', '"why":"edited"')
+  const flagged = await planOf(base, tail)
+  expect(flagged.flagged.length).toBe(1)
+  const edit = (extra: object) => TOOLS.resolve_direct_edit.run(ctxOf(flagged), { action: 'keep', summary: 'added a step', ...extra })
+  const kept = good(edit({ detail: ' 手動加的步驟保留，\r\n之後照常更新 ' }))
+  expect(kept.entries[0].detail).toBe('手動加的步驟保留，\n之後照常更新')
+  const after = await replay(await nextText((await logText(base)) + tail, kept.entries, []))
+  expect(after.flagged).toEqual([])
+  expect(after.applied[after.applied.length - 1].detail).toBe('手動加的步驟保留，\n之後照常更新')
+  expect(bad(edit({ detail: 'Added a step.' }))).toBe('detail only repeats the summary; say what it leaves out')
+  for (const blank of [{}, { detail: '' }]) expect(Object.hasOwn(good(edit(blank)).entries[0], 'detail')).toBe(false)
 })

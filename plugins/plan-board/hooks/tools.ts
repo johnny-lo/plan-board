@@ -173,10 +173,13 @@ const proposeChange = guard((ctx, input) => {
   checkRefs(ctx.plan, item, undefined)
   const created: string[] = []
   const changes = withIds(ctx, raw, created)
+  // Optional: written only when one line of why cannot say what the plan looks like once the user approves.
+  const detail = detailOf(o, 'detail', 'detail', [{ name: 'question', text: question }, { name: 'why', text: why }], ctx.plan)
   const checks = changes.map((c) => ({ id: '', at: ctx.now, kind: c.kind, why, basis: ai, data: c.data }) as Entry)
   const card: Obj = { id: ctx.newId(8), type: 'proposal', question, why, options: [], changes }
   if (item !== undefined) card.item = item
   if (blocking !== undefined) card.blocking = blocking
+  if (detail !== undefined) card.detail = detail
   const open = make(ctx, 'card.open', { card }, why, ai)
   const reason = firstProblem(ctx.plan, [...checks, open])
   if (reason !== null) return { ok: false, error: reason }
@@ -204,16 +207,18 @@ const applyChange = guard((ctx, input) => {
     return fail(`card ${cardId} is not approved: the user has not sent "approve" for it in the pane; ask them, or pass their words as chat`)
   }
   const basis: Basis = hasChat ? { type: 'card', card: cardId, chat } : { type: 'card', card: cardId }
+  // The card's detail, as replay normalized it, goes on every entry the approval writes, as its why does.
+  const detail = card.detail
   const entries: Entry[] = []
   for (const change of changes) {
     if (!isObj(change) || typeof change.kind !== 'string') return fail(`card ${cardId} changed since it was proposed: it holds a malformed change`)
-    entries.push(make(ctx, change.kind as Change['kind'], change.data, card.why, basis))
+    entries.push(make(ctx, change.kind as Change['kind'], change.data, card.why, basis, detail))
   }
   const problem = firstProblem(ctx.plan, entries)
   if (problem !== null) {
     return fail(`The plan changed since this proposal was made (${problem}). Resolve card ${cardId} with resolve_decision and propose again.`)
   }
-  entries.push(make(ctx, 'card.resolve', { card: cardId, outcome: 'approved', choice: 'approve' }, card.why, basis))
+  entries.push(make(ctx, 'card.resolve', { card: cardId, outcome: 'approved', choice: 'approve' }, card.why, basis, detail))
   return accept(ctx, entries, `Applied ${changes.length} change(s) from card ${cardId} and resolved it.`)
 })
 
@@ -403,11 +408,20 @@ const addDecision = guard((ctx, input) => {
   if (!Array.isArray(rawOptions) || rawOptions.length < 2 || rawOptions.length > 4) return fail('options must be an array of 2 to 4 options')
   const options = rawOptions.map((raw, i) => {
     if (!isObj(raw)) return fail(`options[${i}] must be an object`)
-    const option: Obj = { label: text(raw, 'label'), effect: text(raw, 'effect') }
+    const label = text(raw, 'label')
+    const effect = text(raw, 'effect')
+    const at = `options[${i}].detail`
+    const titles = [
+      { name: 'label', text: label },
+      { name: 'effect', text: effect },
+    ]
+    const detail = detailOf(raw, 'detail', at, titles, ctx.plan) ?? fail(`${at} is required: what choosing it means in practice`)
+    const option: Obj = { label, effect }
     const recommended = optBool(raw, 'recommended')
     const reason = optText(raw, 'reason')
     if (recommended !== undefined) option.recommended = recommended
     if (reason !== undefined) option.reason = reason
+    option.detail = detail
     return option
   })
   if (options.filter((o2) => o2.recommended === true).length > 1) return fail('at most one option may be recommended')
@@ -431,10 +445,17 @@ const addUserAction = guard((ctx, input) => {
   if (command !== undefined && command.trim() === '') return fail('command must be a non-empty string when given')
   const step = optText(o, 'step')
   const itemId = checkRefs(ctx.plan, optText(o, 'item'), step)
+  const titles = [
+    { name: 'action', text: action },
+    { name: 'why', text: why },
+  ]
+  const detail =
+    detailOf(o, 'detail', 'detail', titles, ctx.plan) ?? fail('detail is required: why the user has to do this and what happens once it is done')
   const card: Obj = { id: ctx.newId(8), type: 'action', question: action, why, options: [] }
   if (itemId !== undefined) card.item = itemId
   if (step !== undefined) card.step = step
   if (command !== undefined) card.command = command
+  card.detail = detail
   return accept(ctx, [make(ctx, 'card.open', { card }, why, ai)], `Opened action card ${card.id}; the user will mark it done in the pane.`)
 })
 
@@ -444,7 +465,8 @@ const resolveDecision = guard((ctx, input) => {
   const o = objectOf(input)
   const card = text(o, 'card')
   const outcome = text(o, 'outcome')
-  return accept(ctx, [make(ctx, 'card.resolve', { card, outcome }, outcome, ai)], `Resolved card ${card}.`)
+  const detail = detailOf(o, 'detail', 'detail', [{ name: 'outcome', text: outcome }], ctx.plan)
+  return accept(ctx, [make(ctx, 'card.resolve', { card, outcome }, outcome, ai, detail)], `Resolved card ${card}.`)
 })
 
 // ---- resolve_direct_edit ----
@@ -454,6 +476,7 @@ const resolveDirectEdit = guard((ctx, input) => {
   const action = o.action
   if (action !== 'keep' && action !== 'drop') return fail('action must be "keep" or "drop"')
   const summary = text(o, 'summary')
+  const detail = detailOf(o, 'detail', 'detail', [{ name: 'summary', text: summary }], ctx.plan)
   const cardId = optText(o, 'card')
   const flagged = ctx.plan.flagged
   if (flagged.length === 0) return fail('no directly edited lines are flagged; there is nothing to resolve')
@@ -469,7 +492,7 @@ const resolveDirectEdit = guard((ctx, input) => {
     }
   }
   const lines = flagged.map((f) => f.hash)
-  const entry = make(ctx, action === 'keep' ? 'edit.keep' : 'edit.drop', { lines, summary }, summary, { type: 'direct-edit' })
+  const entry = make(ctx, action === 'keep' ? 'edit.keep' : 'edit.drop', { lines, summary }, summary, { type: 'direct-edit' }, detail)
   const verb = action === 'keep' ? 'Kept' : 'Dropped'
   return accept(ctx, [entry], `${verb} ${lines.length} directly edited line(s).`, action === 'drop' ? lines : [])
 })
@@ -501,6 +524,11 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
         },
         item: { ...str, description: 'Item the card is about.' },
         blocking: { ...bool, description: 'Set only when you cannot continue without the answer.' },
+        detail: {
+          ...str,
+          description:
+            'Optional, shown when the user opens the approve choice: what the plan looks like once they approve; write it only when one line of why cannot say it. Plain text within 400 cells (about 200 Chinese characters) and 8 lines; must say more than the question and the why and name no plan ids. Copied to every entry apply_change writes.',
+        },
       },
       required: ['question', 'why', 'changes'],
     },
@@ -586,8 +614,13 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
               effect: { ...str, description: 'What choosing it leads to.' },
               recommended: { ...bool, description: 'At most one option.' },
               reason: str,
+              detail: {
+                ...str,
+                description:
+                  'What choosing it means in practice, shown when the user opens the option details. Plain text within 400 cells (about 200 Chinese characters) and 8 lines; must say more than the label and the effect and name no plan ids.',
+              },
             },
-            required: ['label', 'effect'],
+            required: ['label', 'effect', 'detail'],
           },
         },
         item: str,
@@ -607,10 +640,15 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
         action: { ...str, description: 'One line: what the user has to do.' },
         why: { ...str, description: 'Why it is needed now.' },
         command: { ...str, description: 'The command to run, word for word, when there is one.' },
+        detail: {
+          ...str,
+          description:
+            'Why the user has to do this and what happens once it is done, shown when the user opens the card details. Plain text within 400 cells (about 200 Chinese characters) and 8 lines; must say more than the action and the why and name no plan ids.',
+        },
         item: str,
         step: str,
       },
-      required: ['action', 'why'],
+      required: ['action', 'why', 'detail'],
     },
     run: addUserAction,
   },
@@ -618,7 +656,15 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
     description: 'Close a decision card or an action card the user has answered, recording the outcome.',
     inputSchema: {
       type: 'object',
-      properties: { card: str, outcome: { ...str, description: 'What was decided.' } },
+      properties: {
+        card: str,
+        outcome: { ...str, description: 'What was decided.' },
+        detail: {
+          ...str,
+          description:
+            'Optional longer explanation of the outcome, shown when the user opens the change log entry; write it only when one line cannot say it. Plain text within 400 cells (about 200 Chinese characters) and 8 lines; must say more than the outcome and name no plan ids.',
+        },
+      },
       required: ['card', 'outcome'],
     },
     run: resolveDecision,
@@ -631,6 +677,11 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
         action: { type: 'string', enum: ['keep', 'drop'] },
         summary: { ...str, description: 'What the direct edit changed.' },
         card: { ...str, description: 'Resolved card that asked the user; required when keeping item changes.' },
+        detail: {
+          ...str,
+          description:
+            'Optional longer explanation of the summary, shown when the user opens the change log entry; write it only when one line cannot say it. Plain text within 400 cells (about 200 Chinese characters) and 8 lines; must say more than the summary and name no plan ids.',
+        },
       },
       required: ['action', 'summary'],
     },
