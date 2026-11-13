@@ -626,6 +626,16 @@ test('keeping_flagged_repo_lines_needs_no_card', async () => {
 
 const REQUIRED = 'ops[0].detail is required on add: what this step does and how you will know it is done'
 
+/** The plan as replayed from the log text after the returned entries are written to it. */
+async function replayed(base: Entry[], result: Extract<ToolResult, { ok: true }>): Promise<Plan> {
+  return replay(await nextText(await logText(base), result.entries, []))
+}
+/** The detail the replayed plan holds for the step the first returned entry adds. */
+async function addedDetail(base: Entry[], result: Extract<ToolResult, { ok: true }>): Promise<string | undefined> {
+  const id = (result.entries[0].data as { step: { id: string } }).step.id
+  return (await replayed(base, result)).steps[id].detail
+}
+
 test('add_needs_a_detail_and_writes_it_normalized', async () => {
   const base = [entry('item.add', { item: item('A') })]
   const plan = await planOf(base)
@@ -644,26 +654,29 @@ test('add_needs_a_detail_and_writes_it_normalized', async () => {
 })
 
 test('add_detail_limits_are_200_chinese_400_letters_8_lines', async () => {
-  const plan = await planOf([entry('item.add', { item: item('A') })])
+  const base = [entry('item.add', { item: item('A') })]
+  const plan = await planOf(base)
   const run = (detail: string) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title: 'review', detail }] })
-  good(run('中'.repeat(200)))
+  const kept = async (detail: string) => expect(await addedDetail(base, good(run(detail)))).toBe(detail)
+  await kept('中'.repeat(200))
   expect(bad(run('中'.repeat(201)))).toContain('ops[0].detail is 402 cells wide')
-  good(run('a'.repeat(400)))
+  await kept('a'.repeat(400))
   expect(bad(run('a'.repeat(401)))).toContain('401 cells wide')
   const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n')
-  good(run(lines(8)))
+  await kept(lines(8))
   expect(bad(run(lines(9)))).toContain('ops[0].detail is 9 lines long')
 })
 
 test('a_detail_that_repeats_the_title_or_names_ids_is_refused', async () => {
-  const plan = await planOf([entry('item.add', { item: item('design01') }), entry('item.add', { item: item('docs') })])
+  const base = [entry('item.add', { item: item('design01') }), entry('item.add', { item: item('docs') })]
+  const plan = await planOf(base)
   const run = (title: string, detail: string) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'docs', title, detail }] })
   expect(bad(run('窗格兩個畫面', '窗格 兩個畫面。'))).toBe('ops[0].detail only repeats the title; say what it leaves out')
   expect(bad(run('Pane views', 'pane views.'))).toContain('only repeats the title')
   expect(bad(run('t', '先做 design01 的部分'))).toBe('ops[0].detail names plan ids (design01); use the names the user sees')
-  good(run('t', 'design012 和 design01_x 都不是'))
-  good(run('t', '舊的 ghost123 不在計畫裡'))
-  good(run('t', '寫 docs 的時候順便更新'))
+  for (const detail of ['design012 和 design01_x 都不是', '舊的 ghost123 不在計畫裡', '寫 docs 的時候順便更新']) {
+    expect(await addedDetail(base, good(run('t', detail)))).toBe(detail)
+  }
 })
 
 test('detail_goes_only_on_add_or_detail_ops', async () => {
@@ -699,14 +712,19 @@ test('detail_op_replaces_but_never_clears', async () => {
 })
 
 test('why_detail_goes_on_every_entry_of_the_call', async () => {
-  const plan = await planOf([entry('item.add', { item: item('A') }), step('A', 's1')])
+  const base = [entry('item.add', { item: item('A') }), step('A', 's1')]
+  const plan = await planOf(base)
   const call = (input: object) => TOOLS.update_step.run(ctxOf(plan), input)
   const added = { action: 'add', item: 'A', title: 'new', detail: D }
 
   const sealed = good(call({ why: '換做法', why_detail: ' 舊做法太慢，\n改成先建索引 ', ops: [added, { action: 'status', step: 's1', status: 'doing' }] }))
   expect(sealed.entries.map((e) => e.detail)).toEqual(['舊做法太慢，\n改成先建索引', '舊做法太慢，\n改成先建索引'])
+  const written = (await replayed(base, sealed)).applied
+  expect(written.slice(-2).map((e) => e.detail)).toEqual(['舊做法太慢，\n改成先建索引', '舊做法太慢，\n改成先建索引'])
 
   expect(bad(call({ why_detail: '補充', ops: [{ action: 'note', step: 's1', note: 'x' }] }))).toBe('why_detail needs a why')
+  expect(bad(call({ why_detail: '補充', ops: [added] }))).toBe('why_detail needs a why')
+  expect(bad(call({ why: '  ', why_detail: '補充', ops: [added] }))).toBe('why_detail needs a why')
   expect(bad(call({ why: '換做法', why_detail: '換做法。', ops: [added] }))).toBe('why_detail only repeats the why; say what it leaves out')
   expect(bad(call({ why: '換做法', why_detail: 5, ops: [added] }))).toBe('why_detail must be a string')
   for (const blank of [{ why_detail: '  ' }, {}]) {
@@ -719,10 +737,13 @@ test('why_detail_goes_on_every_entry_of_the_call', async () => {
 })
 
 test('a_detail_that_starts_with_the_title_and_says_more_is_kept', async () => {
-  const plan = await planOf([entry('item.add', { item: item('A') })])
+  const base = [entry('item.add', { item: item('A') })]
+  const plan = await planOf(base)
   const run = (title: string, detail: string) => TOOLS.update_step.run(ctxOf(plan), { why: 'w', ops: [{ action: 'add', item: 'A', title, detail }] })
   const zh = good(run('窗格兩個畫面', '窗格兩個畫面：上方兩個按鈕切換總表和等你'))
   expect(zh.entries[0].data).toMatchObject({ detail: '窗格兩個畫面：上方兩個按鈕切換總表和等你' })
+  expect(await addedDetail(base, zh)).toBe('窗格兩個畫面：上方兩個按鈕切換總表和等你')
   const en = good(run('Pane views', 'Pane views. Two buttons switch between them.'))
   expect(en.entries[0].data).toMatchObject({ detail: 'Pane views. Two buttons switch between them.' })
+  expect(await addedDetail(base, en)).toBe('Pane views. Two buttons switch between them.')
 })

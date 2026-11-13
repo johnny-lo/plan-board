@@ -248,9 +248,10 @@ const updateStep = guard((ctx, input) => {
   const ops = list(o, 'ops')
   const isNotesOnly = ops.every((raw) => isObj(raw) && (raw.action === 'note' || raw.action === 'detail'))
   const isBlank = o.why === undefined || (typeof o.why === 'string' && o.why.trim() === '')
+  // A why_detail explains a why, so it comes first: without a why it gets its own message, not the plain "why is required".
+  if (isBlank && typeof o.why_detail === 'string' && normalizeDetail(o.why_detail) !== '') return fail('why_detail needs a why')
   // A call that only notes where steps stand may leave out why: each note is its own reason.
   const why = isNotesOnly && isBlank ? '' : text(o, 'why')
-  if (typeof o.why_detail === 'string' && normalizeDetail(o.why_detail) !== '' && why.trim() === '') return fail('why_detail needs a why')
   const whyDetail = detailOf(o, 'why_detail', 'why_detail', [{ name: 'why', text: why }], ctx.plan)
   const entries: Entry[] = []
   const said: string[] = []
