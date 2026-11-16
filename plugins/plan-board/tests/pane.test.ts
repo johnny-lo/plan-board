@@ -136,6 +136,16 @@ async function openFolds(ui: Ui): Promise<void> {
   for (const found of await ui.findAll({ type: 'Button', text: /▸ 步驟：/ })) await ui.press({ key: found.key as string })
 }
 
+/** Presses every detail toggle that is drawn, so the details are on screen. */
+async function pressDetails(ui: Ui): Promise<void> {
+  for (const found of await ui.findAll({ type: 'Button' })) if (String(found.key).startsWith('detail:')) await ui.press({ key: found.key as string })
+}
+
+/** Presses every row of an item's history, so each reason and its detail are on screen. */
+async function pressHistoryRows(ui: Ui): Promise<void> {
+  for (const found of await ui.findAll({ type: 'Button' })) if (String(found.key).startsWith('log:') && /^log:\w{8}:/.test(String(found.key))) await ui.press({ key: found.key as string })
+}
+
 test('overview_shows_states_and_expands_item', ZH, async ($, on) => {
   const w = await start($, on, [...board(), blockedOnS2()])
   for (const surface of SURFACES) {
@@ -514,9 +524,31 @@ const everything = () => [
   }),
 ]
 
+/** Entries that carry details, in Chinese and without an id in any text; the ids of S2, B and the new cards sit only in keys. */
+const D_ACTION = 'd5d5d5d5'
+const D_PROPOSAL = 'd6d6d6d6'
+const D_QUESTION = 'd7d7d7d7'
+const detailed = () => [
+  entry('step.detail', { step: S2, detail: STEP_DETAIL }),
+  entry('step.status', { step: S2, status: 'doing' }, { why: '細節跟著這筆', detail: '這一步做完的樣子，寫在紀錄上' }),
+  question(D_QUESTION, {
+    item: B,
+    options: [
+      { label: '不顯示', effect: '一列保持短', detail: OPTION_DETAIL },
+      { label: '顯示', effect: '一眼看到進度', detail: OPTION_DETAIL },
+    ],
+  }),
+  entry('card.open', {
+    card: { id: D_ACTION, type: 'action', item: B, question: ACTION, why: '新的檢查要人核准', options: [], command: 'thoth checks approve', detail: ACTION_DETAIL },
+  }),
+  entry('card.open', {
+    card: { id: D_PROPOSAL, type: 'proposal', item: B, question: '再調整項目？', why: '名稱要改', options: [], detail: '改名之後，總表和卡片都會跟著換', changes: [{ kind: 'item.edit', data: { item: C, title: '設定精靈 v4' } }] },
+  }),
+]
+
 test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
-  const w = await start($, on, everything())
-  const cards = ['5a5a5a5a', Q1, Q2, P1]
+  const w = await start($, on, [...everything(), ...detailed()])
+  const cards = ['5a5a5a5a', Q1, Q2, P1, D_QUESTION, D_ACTION, D_PROPOSAL]
   const items = [A, B, C, D]
   for (const surface of SURFACES) {
     await fresh($, w)
@@ -525,6 +557,8 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     await ui.press({ key: 'group:done' })
     for (const id of items) await ui.press({ key: `item:${id}` })
     await openFolds(ui)
+    await pressDetails(ui)
+    await pressHistoryRows(ui)
     seen.push(...(await texts(ui)))
     expect(seen).toContain('· auth-center 1/1')
     expect(seen).toContain('· ERC後端 0/1 · auth-center 0/1')
@@ -534,10 +568,12 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     await ui.press({ key: 'view:cards' })
     // The first card is open already; the others open on a press.
     for (const id of cards.slice(1)) await ui.press({ key: `card:${id}` })
+    await pressDetails(ui)
     const cardTexts = await texts(ui)
     expect(cardTexts).toContain('決定看板 v1 › ERC後端 · 窗格兩個畫面')
     seen.push(...cardTexts)
-    expect(cardTexts.filter(text => text === '為什麼現在問：')).toHaveLength(3)
+    // Two of the three detailed cards (the question and the proposal) ask why now as well.
+    expect(cardTexts.filter(text => text === '為什麼現在問：')).toHaveLength(5)
     expect(cardTexts.some(text => /^▸ 之前的變動（\d+ 筆）$/.test(text))).toBe(true)
     for (const text of seen) expect(text).not.toMatch(ID)
     await ui.unmount()
@@ -1139,6 +1175,31 @@ test('step_add_history_says_how_the_step_started', async () => {
   expect(zh[1]).toContain('新增「定格式」到「看板」（做完、派給 Thoth 任務） · Thoth pass')
   expect(zh[2]).toMatch(/新增「寫 README」到「看板」$/)
   expect(historyLines(plan.applied[1], plan, 'en')[0]).toContain('added "審查" to "看板" (in progress, assigned to claude-b)')
+})
+
+test('step_detail_line_in_both_languages', async () => {
+  const plan = await replay(await logText(board()))
+  expect(changeLine({ kind: 'step.detail', data: { step: S1, detail: '隨便' } } as never, plan, 'en')).toBe('Step wrote the detail of "定檔案格式"')
+  expect(changeLine({ kind: 'step.detail', data: { step: S1, detail: '隨便' } } as never, plan, 'zh-TW')).toBe('步驟 「定檔案格式」寫了細節')
+})
+
+test('detail_labels_in_english', async ($, on) => {
+  const w = await start($, on, null)
+  await fresh($, w)
+  const added = await $.tool.call({
+    tool: tool('add_decision'),
+    question: 'Install where?',
+    why: 'to know where it goes',
+    options: [{ label: 'Here', effect: 'in this repo', detail: OPTION_DETAIL }, { label: 'There', effect: 'in another repo', detail: OPTION_DETAIL }],
+  })
+  const decision = /card (\w{8})/.exec(String(added.result))?.[1] as string
+  await addAction($)
+  const ui = await pane($, 'terminal')
+  await ui.press({ key: 'view:cards' })
+  await ui.press({ key: `card:${decision}` })
+  expect(await ui.find({ type: 'Button', text: /▸ Option details/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /▸ Details/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('i18n_tables_have_the_same_keys', () => {

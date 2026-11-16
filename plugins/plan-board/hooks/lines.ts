@@ -123,8 +123,8 @@ export function changeLine(change: Change, plan: Plan, lang: Lang, previous?: st
         ? `${t(lang, 'kindStep')} ${t(lang, 'stepUntag', { step: name(change.data.step) })}`
         : `${t(lang, 'kindStep')} ${t(lang, 'stepTag', { step: name(change.data.step), repo: repoLabel(plan, change.data.repo) })}`
     case 'step.detail':
-      // On no item's history, so only a placeholder until the details strings land.
-      return `${t(lang, 'kindStep')} ${name(change.data.step)}`
+      // On no item's history, but every kind has a sentence.
+      return `${t(lang, 'kindStep')} ${t(lang, 'stepDetail', { step: name(change.data.step) })}`
     case 'repo.name':
       // On no item's history, but every kind has a sentence.
       return change.data.name === ''
