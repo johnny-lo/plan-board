@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { sha16 } from '../hooks/checksum.ts'
+import { sealEntry, sha16 } from '../hooks/checksum.ts'
 import { nextText } from '../hooks/logfile.ts'
 import { replay } from '../hooks/replay.ts'
 import { TOOLS } from '../hooks/tools.ts'
@@ -908,6 +908,23 @@ test('resolve_tools_take_an_optional_detail', async () => {
     expect(written.kind).toBe('edit.keep')
     expect(Object.hasOwn(written, 'detail')).toBe(false)
   }
+})
+
+test('an_old_sealed_edit_keep_line_with_a_detail_still_replays', async () => {
+  const base = [entry('item.add', { item: item('A') }), step('A', 's1'), question('q1')]
+  const tail = (await logText([step('A', 's2')])).replace('"why":"test"', '"why":"edited"')
+  const flagged = await planOf(base, tail)
+  expect(flagged.flagged.length).toBe(1)
+  const kept = good(TOOLS.resolve_direct_edit.run(ctxOf(flagged), { action: 'keep', summary: 'added a step' }))
+  // The line an older resolve_direct_edit wrote: the same entry, with a top-level detail.
+  const old = { ...kept.entries[0], detail: '手動加的步驟保留，\n之後照常更新' }
+  const text = (await logText(base)) + tail + (await sealEntry(old)) + '\n'
+  const after = await replay(text)
+  expect(after.flagged).toEqual([])
+  expect(after.skipped).toEqual([])
+  const written = after.applied.find((e) => e.id === old.id)
+  expect(written?.kind).toBe('edit.keep')
+  expect(written?.detail).toBe('手動加的步驟保留，\n之後照常更新')
 })
 
 // The id check (Global Constraints ④) on the ids of steps and cards, not only items, through the tool as the engine calls it.

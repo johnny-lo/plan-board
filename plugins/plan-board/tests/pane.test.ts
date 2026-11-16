@@ -2312,6 +2312,12 @@ test('closed_details_add_at_most_one_row_per_card', ZH, async ($, on) => {
     }
     // An action card's toggle sits straight in the card's Box; a proposal's sits in a Box that holds only the toggle and adds no vertical space.
     expect((await boxOfButton(ui, `detail:${AD}`))?.box.props?.key).toBe(`card:box:${AD}`)
+    // The action card's own Box has the same vertical spacing with a detail as without.
+    const boxOf = async (card: string) => nodes((await ui.drawn()) as Drawn).find(node => node.props?.key === `card:box:${card}`)
+    const [withBox, withoutBox] = [await boxOf(AD), await boxOf(AN)]
+    expect(withBox).toBeDefined()
+    expect(withoutBox).toBeDefined()
+    for (const side of VERTICAL) expect(withBox?.props?.[side]).toBe(withoutBox?.props?.[side])
     const wrap = (await boxOfButton(ui, `detail:${PD}`))?.box
     expect(wrap?.children).toHaveLength(1)
     for (const side of VERTICAL) expect(wrap?.props?.[side]).toBeUndefined()
