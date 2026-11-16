@@ -179,7 +179,7 @@ test('summary_lists_items_cards_and_edits', async () => {
 test('summary_of_empty_plan', async () => {
   expect(summary(emptyPlan(), emptyLocal)).toBe('Plan storage: repo (plan/log.jsonl)\nNo plan yet in plan/log.jsonl.')
   expect(summary(await replay('', 'local'), emptyLocal)).toBe(
-    'Plan storage: this machine only (run /plan init to keep it in the repo)\nNo plan yet.',
+    'Plan storage: this machine only (run /planboard init to keep it in the repo)\nNo plan yet.',
   )
 })
 
@@ -189,7 +189,7 @@ test('summary_starts_with_the_storage_line', async () => {
   expect(repo.split('\n')[0]).toBe('Plan storage: repo (plan/log.jsonl)')
   expect(repo).toContain('1. [A] Setup')
   const local = summary(await replay(text, 'local'), emptyLocal)
-  expect(local.split('\n')[0]).toBe('Plan storage: this machine only (run /plan init to keep it in the repo)')
+  expect(local.split('\n')[0]).toBe('Plan storage: this machine only (run /planboard init to keep it in the repo)')
   expect(local).toContain('1. [A] Setup')
   expect(local).toContain('Open cards:')
 })
@@ -243,7 +243,7 @@ test('a_thought_only_card_is_answered_and_the_ai_is_told_to_settle_it', async ()
 })
 
 test('guide_asks_before_plan_init_and_links_superpowers_documents', () => {
-  expect(GUIDE).toContain('/plan init')
+  expect(GUIDE).toContain('/planboard init')
   expect(GUIDE).toContain('add_decision')
   expect(GUIDE).toContain('superpowers')
 })

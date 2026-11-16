@@ -18,7 +18,7 @@ export const GUIDE: string = [
   '- Choices from the pane reach you as messages. Close every answered card: resolve_decision with a non-empty outcome, or apply_change for an approved proposal.',
   "- A card the user answered with a thought is settled now, in the same turn: if the thought answers it, resolve the card with that outcome; if it does not, resolve it and open a new card whose question and options take the thought into account, instead of only replying in chat. For a proposal, a thought that agrees means apply_change with the user's words as chat; one that changes or rejects it means resolve the card and, if needed, propose again.",
   '- When the summary lists directly edited lines, read `git diff -- plan/log.jsonl`. If they touch items, ask the user with a card whether to keep or revert them, then call resolve_direct_edit with that card; otherwise call resolve_direct_edit yourself. To revert a line that was valid before, restore it with git instead of dropping it.',
-  '- Where the plan is kept: the first line of the summary says. If it says "this machine only", the plan is not in git yet; when this repo looks like a good place to keep it, ask the user with add_decision before suggesting /plan init, and never create plan/ yourself.',
+  '- Where the plan is kept: the first line of the summary says. If it says "this machine only", the plan is not in git yet; when this repo looks like a good place to keep it, ask the user with add_decision before suggesting /planboard init, and never create plan/ yourself.',
   "- When you write a superpowers spec or plan for an item, link the file to it with update_step, action link (item, doc: the path from the repo root). Once the plan is written, add each of its tasks as a step of that item (title copied as written, and a detail in the user's words on what the task does for them and how you will know it is done), and when a task is done, mark its step done. Superpowers says how the work is done; plan-board says how far it is and why it changed.",
   "- Every why, card question, item or step title, detail and outcome is read by the user: write it in plain words in the user's language, with no ids and no file or function names they have not used. A detail is plain text: line breaks are fine, no markdown; keep it within 400 cells (about 200 Chinese characters); one that only repeats its title is refused.",
   '- The ids in the summary are for you; never show them to the user.',
@@ -27,7 +27,7 @@ export const GUIDE: string = [
 const WORDS = { done: 'done', doing: 'in progress', next: 'next', later: 'later' }
 const STORAGE = {
   repo: 'Plan storage: repo (plan/log.jsonl)',
-  local: 'Plan storage: this machine only (run /plan init to keep it in the repo)',
+  local: 'Plan storage: this machine only (run /planboard init to keep it in the repo)',
 }
 
 export function summary(plan: Plan, local: Local): string {

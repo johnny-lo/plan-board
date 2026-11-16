@@ -8,6 +8,7 @@ export function langOf(value: unknown): Lang {
 const EN = {
   commandDescription: 'Open the plan board pane',
   commandOpened: 'Plan board opened.',
+  commandUnregistered: 'plan-board: the /planboard command could not be registered, so the pane cannot be opened with it; use Open on the plan line above the prompt when it shows.',
   initDone: 'Plan moved into {path} (entries moved: {n}).',
   initEmpty: 'Created an empty plan at {path}; no entries were moved, because this machine has no plan for this repo.',
   initEmptyNoAttributes: 'Created an empty plan at {path}; no entries were moved, because this machine has no plan for this repo. .gitattributes could not be updated; add the line "plan/log.jsonl merge=union" to it yourself.',
@@ -18,7 +19,7 @@ const EN = {
   initKeptNoAttributes: 'Plan moved into {path} (entries moved: {n}), but another session kept writing to the copy on this machine, so that copy was kept; .gitattributes could not be updated either, so add the line "plan/log.jsonl merge=union" to it yourself.',
   initFailed: 'Could not move the plan into {path}; nothing was changed and the plan is still on this machine.',
   initHalf: 'Plan moved into {path} (entries moved: {n}), but a later step failed, so the copy on this machine is still there.',
-  localMode: 'This plan lives only on this machine; type /plan init in the repo to keep it with git',
+  localMode: 'This plan lives only on this machine; type /planboard init in the repo to keep it with git',
   doc: 'Doc: {path}',
   yourThought: 'Your thought: {draft}',
   assignedTo: 'assigned to {to}',
@@ -134,6 +135,7 @@ export type Key = keyof typeof EN
 const ZH_TW: Record<Key, string> = {
   commandDescription: '打開計畫看板窗格',
   commandOpened: '計畫看板已打開。',
+  commandUnregistered: 'plan-board：/planboard 指令沒能註冊，沒辦法用它打開窗格；輸入框上方有計畫列時，可以改按「打開」。',
   initDone: '計畫已搬進 {path}（{n} 筆紀錄）。',
   initEmpty: '在 {path} 建了空的計畫，沒有搬任何紀錄：這台電腦沒有這個 repo 的計畫。',
   initEmptyNoAttributes: '在 {path} 建了空的計畫，沒有搬任何紀錄：這台電腦沒有這個 repo 的計畫；.gitattributes 沒改成，請自己在裡面加上 plan/log.jsonl merge=union 這一行。',
@@ -144,7 +146,7 @@ const ZH_TW: Record<Key, string> = {
   initKeptNoAttributes: '計畫已搬進 {path}（{n} 筆紀錄），但這段時間別的 session 一直在寫本機那份，所以本機那份先留著沒刪；.gitattributes 也沒改成，請自己在裡面加上 plan/log.jsonl merge=union 這一行。',
   initFailed: '沒能搬進 {path}，什麼都沒改，計畫還在這台電腦。',
   initHalf: '計畫已搬進 {path}（{n} 筆紀錄），但後面的步驟出錯，本機那份還留著。',
-  localMode: '這個計畫只存在這台電腦；在 repo 裡打 /plan init 才會跟著 git 走',
+  localMode: '這個計畫只存在這台電腦；在 repo 裡打 /planboard init 才會跟著 git 走',
   doc: '文件：{path}',
   yourThought: '你的想法：{draft}',
   assignedTo: '派給 {to}',

@@ -38,7 +38,7 @@ const S3 = '53535353'
 const ULID = '01jf0e1d2c3b4a59687f0e1d2c'
 const SPEC = 'docs/superpowers/specs/2026-10-07-plan-board-design.md'
 const PLAN = 'docs/superpowers/plans/2026-10-07-plan-board.md'
-const LOCAL_LINE = '這個計畫只存在這台電腦；在 repo 裡打 /plan init 才會跟著 git 走'
+const LOCAL_LINE = '這個計畫只存在這台電腦；在 repo 裡打 /planboard init 才會跟著 git 走'
 const Q0 = 'e0e0e0e0'
 const Q1 = 'e1e1e1e1'
 const Q2 = 'e2e2e2e2'
@@ -1059,7 +1059,7 @@ test('local_mode_line_in_english', async ($, on) => {
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await pane($, surface)
-    expect(await ui.find({ type: 'Text', text: 'This plan lives only on this machine; type /plan init in the repo to keep it with git' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'This plan lives only on this machine; type /planboard init in the repo to keep it with git' })).toBeDefined()
     await ui.unmount()
   }
 })
@@ -1225,7 +1225,7 @@ test('i18n_tables_have_the_same_keys', () => {
     '送出 {n} 個決定', '停止操作 1 分鐘後自動送出；Claude 工作中就等這輪結束再送', '已選：{choice}（待送出）', '想法：{draft}（待送出）', '清除', '已送出，等 AI 結案',
     '或寫下你的想法…（立即送出）', '或寫下你的想法…（和選擇一起送出）', '送出', '暫存',
     '這個 repo 還沒有計畫', '✓ 目前沒有等你的事',
-    '這個計畫只存在這台電腦；在 repo 裡打 /plan init 才會跟著 git 走', '文件：{path}', '你的想法：{draft}', '派給 Thoth 任務', '派給 {to}',
+    '這個計畫只存在這台電腦；在 repo 裡打 /planboard init 才會跟著 git 走', '文件：{path}', '你的想法：{draft}', '派給 Thoth 任務', '派給 {to}',
     '計畫已搬進 {path}（{n} 筆紀錄）。', '這個 repo 已經把計畫存在 {path}，什麼都沒改。',
     '計畫被直接改過，等 AI 檢查', '· ⚠ 計畫被直接改過', '計畫：{doing} 項進行中 · {waiting} 件事等你', '打開',
     '做好了', '為什麼：', '指令：{command}', '已送出，等 AI 確認', '等你處理：{question}', '請你「{question}」',

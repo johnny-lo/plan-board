@@ -11,6 +11,10 @@ export type World = {
   submitted: string[]
   opened: string[]
   toasts: string[]
+  /** The names of the commands the plugin registered, in order. */
+  commands: string[]
+  /** While set, registering a command fails with this as the host's reason, as when Claude Code refuses a name. */
+  failCommands: string | null
   /** Releases the waits `$.clock.after` is holding. */
   fireTimer: () => void
   /** While true every `stat` reports a bigger file than the one before, as if another session were writing. */
@@ -45,6 +49,8 @@ export function world(on: On, files: Record<string, string> = {}): World {
     submitted: [],
     opened: [],
     toasts: [],
+    commands: [],
+    failCommands: null,
     fireTimer: () => {
       for (const release of waits.splice(0)) release()
     },
@@ -106,7 +112,11 @@ export function world(on: On, files: Record<string, string> = {}): World {
   })
   on('clock.after', () => new Promise(resolve => waits.push(() => resolve({ value: undefined }))))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__plan-board__${e.name}` } }))
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('command.register', (_, e) => {
+    if (w.failCommands !== null) return { deny: w.failCommands }
+    w.commands.push(e.name)
+    return { value: { command: e.name } }
+  })
   on('ui.open', (_, e) => {
     w.opened.push(e.id)
     return { value: undefined as never }

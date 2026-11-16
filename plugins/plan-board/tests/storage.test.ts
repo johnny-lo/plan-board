@@ -14,7 +14,7 @@ const OD = '選了之後實際會怎麼做'
 const ATTRIBUTES = '/repo/.gitattributes'
 const STORED = 'log:/repo'
 const REPO_LINE = 'Plan storage: repo (plan/log.jsonl)'
-const LOCAL_LINE = 'Plan storage: this machine only (run /plan init to keep it in the repo)'
+const LOCAL_LINE = 'Plan storage: this machine only (run /planboard init to keep it in the repo)'
 const ZH = { options: { language: 'zh-TW' } }
 const ID = /[0-9a-f]{8}/
 const tool = (name: string) => `mcp__plan-board__${name}`
@@ -209,7 +209,7 @@ test('plan_init_reply_counts_lines_and_names_the_file', async ($, on) => {
   expect(text).not.toBe('')
   w.files[ATTRIBUTES] = '* text=auto'
 
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe(text)
   expect(w.store.has(STORED)).toBe(false)
   expect(w.files[ATTRIBUTES]).toBe('* text=auto\nplan/log.jsonl merge=union\n')
@@ -235,7 +235,7 @@ test('plan_init_reply_counts_lines_and_names_the_file', async ($, on) => {
 test('plan_init_without_a_local_plan_creates_an_empty_repo_log_and_says_it_moved_nothing', async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe('')
   expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
   expect(ran.text).toContain(`Created an empty plan at ${LOG}; no entries were moved`)
@@ -246,7 +246,7 @@ test('plan_init_without_a_local_plan_creates_an_empty_repo_log_and_says_it_moved
 test('plan_init_without_a_local_plan_says_it_moved_nothing_in_zh_tw', ZH, async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe('')
   expect(ran.text).toContain(`在 ${LOG} 建了空的計畫，沒有搬任何紀錄`)
   expect(ran.text).not.toContain('已搬進')
@@ -256,7 +256,7 @@ test('plan_init_without_a_local_plan_tells_about_gitattributes_when_that_fails',
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
   w.failWrites = '.gitattributes'
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe('')
   expect(ATTRIBUTES in w.files).toBe(false)
   expect(ran.text).toContain(`Created an empty plan at ${LOG}; no entries were moved`)
@@ -272,7 +272,7 @@ async function initOutsideARepo($: Engine, w: World, root = '/work', between: ()
   w.store.set(`log:${root}`, stored)
   await $.session.start({ cwd: root })
   between()
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   // No plan/, no .gitattributes, and the plan on this machine is still there and still read.
   expect(Object.keys(w.files)).toEqual([])
   expect(w.store.get(`log:${root}`)).toBe(stored)
@@ -322,7 +322,7 @@ test('plan_init_in_a_repo_with_a_log_changes_nothing_and_says_so', async ($, on)
   const w = world(on, { [LOG]: text })
   w.store.set(STORED, 'left over\n')
   await $.session.start({ cwd: '/repo' })
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe(text)
   expect(ATTRIBUTES in w.files).toBe(false)
   expect(w.store.get(STORED)).toBe('left over\n')
@@ -336,13 +336,13 @@ test('plan_init_answers_in_zh_tw', ZH, async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
   await propose($)
-  const made = await $.command.run({ command: 'plan', args: 'init' })
+  const made = await $.command.run({ command: 'planboard', args: 'init' })
   const moved = w.files[LOG].split('\n').filter(Boolean).length
   expect(moved).toBe(1)
   expect(made.text).toContain(`計畫已搬進 ${LOG}（${moved} 筆紀錄）`)
   expect(made.text).not.toMatch(/[a-z]{4,} [a-z]{4,}/)
   expect(made.text).not.toMatch(ID)
-  const again = await $.command.run({ command: 'plan', args: 'init' })
+  const again = await $.command.run({ command: 'planboard', args: 'init' })
   expect(again.text).toContain(`已經把計畫存在 ${LOG}`)
   expect(again.text).toContain('什麼都沒改')
 })
@@ -413,7 +413,7 @@ test('plan_init_adds_the_lines_the_local_log_gained_before_deleting_it', async (
     w.store.set(STORED, one + two + three + four)
     w.files[LOG] += four
   }
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe(one + two + four + three)
   expect(w.store.has(STORED)).toBe(false)
   expect(w.files[ATTRIBUTES]).toBe('plan/log.jsonl merge=union\n')
@@ -437,7 +437,7 @@ async function initWhileStoredLogKeepsChanging($: Engine, w: World, before: () =
     if (gets >= 2 && gets <= 4) w.store.set(STORED, lines.slice(0, gets).join(''))
   }
   before()
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   return { lines, text: ran.text as string }
 }
 
@@ -486,7 +486,7 @@ test('plan_init_keeps_a_line_that_lands_in_plan_log_between_its_merge_read_and_w
       w.files[LOG] += three
     }
   }
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe(one + three + two)
   expect(w.store.has(STORED)).toBe(false)
   // The count is this machine's entries; the line the other session wrote is not one of them.
@@ -519,7 +519,7 @@ async function initThatCannotWrite($: Engine, w: World): Promise<string> {
   const before = storedText(w)
   await $.session.start({ cwd: '/repo' })
   w.failWrites = 'log.jsonl'
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(storedText(w)).toBe(before)
   expect(LOG in w.files).toBe(false)
   expect(ran.text).not.toContain('read-only')
@@ -547,7 +547,7 @@ async function initWhoseDeleteFails($: Engine, w: World): Promise<string> {
   w.store.set(STORED, stored)
   await $.session.start({ cwd: '/repo' })
   w.failDeletes = true
-  const ran = await $.command.run({ command: 'plan', args: 'init' })
+  const ran = await $.command.run({ command: 'planboard', args: 'init' })
   expect(w.files[LOG]).toBe(stored)
   expect(storedText(w)).toBe(stored)
   expect(ran.text).not.toContain('locked')
@@ -572,15 +572,15 @@ test('plan_init_says_the_local_copy_is_still_there_when_a_later_step_fails_in_zh
 test('plain_plan_still_opens_the_pane', async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/repo' })
-  await $.command.run({ command: 'plan' })
+  await $.command.run({ command: 'planboard' })
   expect(w.opened).toEqual(['plan-board'])
-  await $.command.run({ command: 'plan', args: '' })
+  await $.command.run({ command: 'planboard', args: '' })
   expect(w.opened).toEqual(['plan-board', 'plan-board'])
   expect(Object.keys(w.files)).toEqual([])
 })
 
 test('guide_tells_the_model_to_ask_before_plan_init_and_to_link_superpowers_docs', () => {
-  expect(GUIDE).toContain('ask the user with add_decision before suggesting /plan init')
+  expect(GUIDE).toContain('ask the user with add_decision before suggesting /planboard init')
   expect(GUIDE).toContain('never create plan/ yourself')
   expect(GUIDE).toContain('superpowers')
   expect(GUIDE).toContain('action link')

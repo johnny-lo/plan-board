@@ -4,7 +4,7 @@
 
 **A plan board for Claude Code: see what is done, what is in progress and what is next, and decide without leaving the session.**
 
-plan-board is a Claude Code plugin. A repo that has `plan/log.jsonl` keeps its plan there; any other repo keeps it on your machine until you run `/plan init`. A pane shows the plan as an overview and as decision cards, and a line above the prompt tells you how many items are in progress and how many decisions are waiting for you. Only the AI changes the plan, through the plugin's tools, and every change is logged with a reason.
+plan-board is a Claude Code plugin. A repo that has `plan/log.jsonl` keeps its plan there; any other repo keeps it on your machine until you run `/planboard init`. A pane shows the plan as an overview and as decision cards, and a line above the prompt tells you how many items are in progress and how many decisions are waiting for you. Only the AI changes the plan, through the plugin's tools, and every change is logged with a reason.
 
 ## Install
 
@@ -15,7 +15,7 @@ In Claude Code:
 /plugin install plan-board@plan-board
 ```
 
-Open the pane with `/plan`, or press **Open** on the line above the prompt.
+Open the pane with `/planboard`, or press **Open** on the line above the prompt.
 
 ## Language
 
@@ -36,7 +36,7 @@ There are two modes, decided each time the plan is read: **repo mode** when `pla
 - The plan follows the code: each branch has its own copy, and a feature branch's progress shows on `main` after the merge.
 - In local mode the plan is the same log text, kept in the plugin's store on this machine under the repo's root. It does not follow git, `.gitattributes` is left alone, and no file in the repo is created or changed. The overview shows one small line saying so.
 - When one session looks after several repos, start it in the folder that holds them. The plan is then that folder's own local plan, and each step can say which repo it is done in (see "Items and steps").
-- Only you move a repo to repo mode, by typing `/plan init` in it. It creates `plan/log.jsonl` with the local log unchanged, clears the local copy and makes sure `.gitattributes` has the line above; when the root is not a git repo it changes nothing and the plan stays on your machine. Neither the plugin's tools nor the AI ever create `plan/`; when a repo looks like a good place for one, the AI asks you with a decision card whether to run `/plan init`. When `plan/log.jsonl` already exists, `/plan init` changes nothing and says so.
+- Only you move a repo to repo mode, by typing `/planboard init` in it. It creates `plan/log.jsonl` with the local log unchanged, clears the local copy and makes sure `.gitattributes` has the line above; when the root is not a git repo it changes nothing and the plan stays on your machine. Neither the plugin's tools nor the AI ever create `plan/`; when a repo looks like a good place for one, the AI asks you with a decision card whether to run `/planboard init`. When `plan/log.jsonl` already exists, `/planboard init` changes nothing and says so.
 - The plan is changed only through the plugin's tools. `Edit` and `Write` on files under `plan/` are refused. Each line carries a checksum, so a line changed any other way (a shell, another tool, your editor) is marked as edited directly: the pane and the line above the prompt warn you, and the AI is asked to look at `git diff -- plan/log.jsonl` and either keep or drop it, asking you first when it touches items.
 - The pane's stage-and-send state (picks not yet sent, cards sent and waiting to be closed, what is expanded) belongs to your machine and is not in the repo.
 

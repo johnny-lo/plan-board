@@ -27,6 +27,8 @@ import type { ToolName } from './tools.ts'
 import type { Card, Local, Plan } from '../types'
 
 const PANE = 'plan-board'
+/** The slash command; Claude Code refuses a mod command named like a built-in, and plan is one. */
+const COMMAND = 'planboard'
 const TITLE = 'Plan board'
 /** Staged choices go out on their own after this long without a pick. */
 const AUTO_SEND_MS = 60_000
@@ -38,7 +40,7 @@ const typing = atom({ plugin: 'plan-board', key: 'typing' } as const, {} as Reco
 const DENY_EDIT =
   'Files under plan/ are written only through the plan-board tools: propose_change, apply_change, update_step, add_decision, add_user_action, resolve_decision, resolve_direct_edit.'
 const DENY_BUSY = 'The plan file is being written by another session; try again.'
-const DENY_MISSING = 'plan/log.jsonl is gone, so nothing was written. Ask the user to restore it, or to run /plan init for a fresh one.'
+const DENY_MISSING = 'plan/log.jsonl is gone, so nothing was written. Ask the user to restore it, or to run /planboard init for a fresh one.'
 const NOTE_ATTRIBUTES =
   ' Note: .gitattributes could not be updated, so plan/log.jsonl may conflict when branches merge; add the line "plan/log.jsonl merge=union" to .gitattributes.'
 
@@ -53,7 +55,7 @@ const INIT_REPLY = {
   half: 'initHalf',
 } as const
 
-/** The reply to /plan init: a plan/log.jsonl made from no local plan says it is empty instead of moved. */
+/** The reply to /planboard init: a plan/log.jsonl made from no local plan says it is empty instead of moved. */
 function initReply(made: InitResult): Key {
   if (made.lines === 0 && made.outcome === 'created') return 'initEmpty'
   if (made.lines === 0 && made.outcome === 'no-attributes') return 'initEmptyNoAttributes'
@@ -226,7 +228,17 @@ export const register: Register = (on, options) => {
       const registered = await $.tool.register({ name, description: tool.description, inputSchema: tool.inputSchema as Record<string, unknown> })
       names.set(registered.tool, name)
     }
-    await $.command.register({ name: 'plan', description: t(lang, 'commandDescription') })
+    // A refused name must not cost the tools or the staged choices: say so once and go on.
+    try {
+      await $.command.register({ name: COMMAND, description: t(lang, 'commandDescription') })
+    } catch {
+      // The host's reason is for developers; the user gets a short notice in their language.
+      try {
+        await $.ui.toast(t(lang, 'commandUnregistered'))
+      } catch {
+        // No way to show it either; the rest of the start still runs.
+      }
+    }
     // Choices staged before a reload still go out on their own.
     reschedule($, await read($, local))
     return next(e)
@@ -296,7 +308,7 @@ export const register: Register = (on, options) => {
     return done
   })
 
-  on('command.run', { command: 'plan' }, async ($, e) => {
+  on('command.run', { command: COMMAND }, async ($, e) => {
     if ((e.args ?? '').trim() === 'init') {
       const top = await rootNow($)
       let made: InitResult

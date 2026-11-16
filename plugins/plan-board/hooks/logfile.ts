@@ -70,7 +70,7 @@ async function stamped($: Files, path: string): Promise<string | null> {
   return `${size}:${mtimeMs}`
 }
 
-/** plan/log.jsonl; it is never created by a write, only by /plan init. */
+/** plan/log.jsonl; it is never created by a write, only by /planboard init. */
 export function repoMedium($: Files, root: string): Medium {
   const path = logPath(root)
   return {
@@ -179,7 +179,7 @@ export async function commitEntries($: Files, root: string, entries: Entry[], dr
 
 /**
  * Appends to the log kept in $.store (local mode). Before every write it looks for plan/log.jsonl again: when another
- * session's /plan init has made it, the entries go there instead (repo mode), and $.store is left alone.
+ * session's /planboard init has made it, the entries go there instead (repo mode), and $.store is left alone.
  */
 export async function commitLocal($: Files, store: Store, root: string, entries: Entry[], drop: string[]): Promise<'ok' | 'busy' | 'missing' | 'no-attributes'> {
   const outcome = await commitText(storeMedium(store, root), entries, drop, () => $.fs.exists(logPath(root)))
@@ -214,13 +214,13 @@ async function appendGained(medium: Medium, now: string): Promise<void> {
 
 export type InitOutcome = 'created' | 'exists' | 'not-repo' | 'no-attributes' | 'kept' | 'kept-no-attributes' | 'failed' | 'half'
 
-/** What /plan init did, how many of this machine's entries are in plan/log.jsonl because of it, and that file's path. */
+/** What /planboard init did, how many of this machine's entries are in plan/log.jsonl because of it, and that file's path. */
 export type InitResult = { outcome: InitOutcome; lines: number; path: string }
 
 const entryCount = (text: string): number => text.split('\n').filter(line => line.trim() !== '').length
 
 /**
- * What /plan init does: plan/log.jsonl gets the local text, the local copy goes away and .gitattributes gets its line.
+ * What /planboard init does: plan/log.jsonl gets the local text, the local copy goes away and .gitattributes gets its line.
  * The local copy is read again before it goes: lines it gained meanwhile are added to plan/log.jsonl (the ones already
  * there stay, as with merge=union, and a line another session adds meanwhile is not overwritten), up to 3 times.
  * `'exists'`: the repo already has the file, so nothing was touched.
