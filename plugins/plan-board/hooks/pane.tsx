@@ -127,6 +127,25 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
     <Button key={key} plain label={`${mine.expanded.includes(key) ? '▾' : '▸'} ${label}`} onPress={() => actions.toggle(key)} />
   )
 
+  /** The one control that opens and closes a detail: a plain Button keyed `key` (also its key in mine.expanded), ▸ closed and ▾ open,
+   *  before the label or after it; after an empty label it is the arrow alone. No hotkey. */
+  const detailToggle = (key: string, label: string, place: 'before' | 'after') => {
+    const arrow = mine.expanded.includes(key) ? '▾' : '▸'
+    const text = label === '' ? arrow : place === 'before' ? `${arrow} ${label}` : `${label} ${arrow}`
+    return <Button key={key} plain label={text} onPress={() => actions.toggle(key)} />
+  }
+
+  /** The one place a detail is drawn: a column Box indented `indent`, one dim wrapping Text per line (keys `${key}:${n}`), a blank line as ' '. */
+  const detailBlock = (key: string, detail: string, indent: number) => (
+    <Box key={`box:${key}`} flexDirection="column" paddingLeft={indent}>
+      {detail.split('\n').map((line, n) => (
+        <Text key={`${key}:${n}`} dimColor wrap="wrap">
+          {line === '' ? ' ' : line}
+        </Text>
+      ))}
+    </Box>
+  )
+
   const overview = () => {
     if (current.order.length === 0) {
       return (
@@ -145,20 +164,31 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
       const note =
         waiting === undefined ? evidenceOf(step, lang) : t(lang, waiting.type === 'action' ? 'waitingAction' : 'blockedBy', { question: waiting.question })
       const mark = markOf(step, waiting !== undefined, lang)
-      return (
+      // A step with a detail draws its title as the toggle (route A); one without draws as it always has.
+      const detail = step.detail ?? ''
+      const detailKey = `detail:${stepId}`
+      const title = (text: string) => (detail === '' ? <Text>{text}</Text> : detailToggle(detailKey, text, 'after'))
+      const row = (
         <Box key={`step:${stepId}`} flexDirection="row" gap={2}>
           {step.repo === undefined ? (
-            <Text>{`${mark} ${step.title}`}</Text>
+            title(`${mark} ${step.title}`)
           ) : (
             <Box flexDirection="row" gap={1}>
               <Text>{mark}</Text>
               <Text dimColor>{`${repoLabel(current, step.repo)} ·`}</Text>
-              <Text>{step.title}</Text>
+              {title(step.title)}
             </Box>
           )}
           {step.assignee !== undefined && <Text dimColor>{assignedText(step.assignee, lang)}</Text>}
           {step.note !== undefined && <Text dimColor>{step.note}</Text>}
           {note !== '' && <Text dimColor>{note}</Text>}
+        </Box>
+      )
+      if (detail === '') return row
+      return (
+        <Box key={`box:step:${stepId}`} flexDirection="column">
+          {row}
+          {mine.expanded.includes(detailKey) && detailBlock(detailKey, detail, 2)}
         </Box>
       )
     }

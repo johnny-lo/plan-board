@@ -96,7 +96,10 @@ const ROW = /^(?:fold|why):(.*)$/
 /** An open group in `expanded`: steps:<item id> and log:<item id> belong to an item, recent:<card id> to a card; group:done is the overview's. */
 const GROUP = /^(steps|log|recent):(.*)$/
 
-/** Drops what belongs to cards that are resolved or gone, and open history rows whose entry is gone; item ids stay while the item does. */
+/** An open detail in `expanded`: detail:<step id> or detail:<card id>. */
+const DETAIL = /^detail:(.*)$/
+
+/** Drops what belongs to cards that are resolved or gone, open history rows whose entry is gone and open details of steps that are gone; item ids stay while the item does. */
 export function forget(local: Local, plan: Plan): Local {
   const isOpen = (id: string): boolean => Object.hasOwn(plan.cards, id) && plan.cards[id].resolved === undefined
   const keepOpen = (table: Record<string, Pick>): Record<string, Pick> => Object.fromEntries(Object.entries(table).filter(([id]) => isOpen(id)))
@@ -104,6 +107,8 @@ export function forget(local: Local, plan: Plan): Local {
   const isKept = (id: string): boolean => {
     const row = ROW.exec(id)
     if (row !== null) return entries.has(row[1])
+    const detail = DETAIL.exec(id)
+    if (detail !== null) return Object.hasOwn(plan.steps, detail[1]) || isOpen(detail[1])
     if (id === 'group:done') return true
     const group = GROUP.exec(id)
     if (group !== null) return group[1] === 'recent' ? isOpen(group[2]) : Object.hasOwn(plan.items, group[2])

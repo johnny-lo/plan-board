@@ -1780,3 +1780,193 @@ test('an_item_without_done_steps_has_no_done_line_and_without_unfinished_ones_no
   await ui.unmount()
   expect(localOf(w).expanded).toEqual([C])
 })
+
+/** The keys of the buttons that open a detail. */
+async function detailButtons(ui: Ui): Promise<string[]> {
+  return (await ui.findAll({ type: 'Button' })).map(found => String(found.key)).filter(key => key.startsWith('detail:'))
+}
+
+test('a_step_detail_opens_under_its_title', ZH, async ($, on) => {
+  const w = await start($, on, [...board()])
+  const added = await $.tool.call({
+    tool: tool('update_step'),
+    why: '多一步',
+    ops: [{ action: 'add', item: B, title: '英文說明', detail: '寫給第一次用的人：\n裝好後五分鐘內看得懂總表' }],
+  })
+  const id = /step (\w{8})/.exec(String(added.result))?.[1] as string
+  expect(id).toMatch(ID)
+  const done = await $.tool.call({ tool: tool('update_step'), why: '補上細節', ops: [{ action: 'detail', step: S1, detail: '每一行一筆紀錄，帶檢查碼' }] })
+  expect(done.deny).toBeUndefined()
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    const toggle = await ui.find({ key: `detail:${id}` })
+    expect(toggle?.type).toBe('Button')
+    expect(toggle?.text).toBe('○ 英文說明 ▸')
+    expect(toggle?.props.hotkey).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '寫給第一次用的人：' })).toBeUndefined()
+    // The title is the toggle: no Text draws it as well.
+    expect(await ui.find({ type: 'Text', text: '○ 英文說明' })).toBeUndefined()
+
+    await ui.press({ key: `detail:${id}` })
+    expect((await ui.find({ key: `detail:${id}` }))?.text).toMatch(/▾$/)
+    const first = await ui.find({ type: 'Text', text: '寫給第一次用的人：' })
+    expect(first).toBeDefined()
+    expect(first?.props.dimColor).toBe(true)
+    expect(await ui.find({ type: 'Text', text: '裝好後五分鐘內看得懂總表' })).toBeDefined()
+    const rows = await order(ui)
+    const at = rows.indexOf('○ 英文說明 ▾')
+    expect(rows.slice(at, at + 3)).toEqual(['○ 英文說明 ▾', '寫給第一次用的人：', '裝好後五分鐘內看得懂總表'])
+    expect((await parentOf(ui, '寫給第一次用的人：'))?.box.props?.paddingLeft).toBe(2)
+
+    await ui.press({ key: `detail:${id}` })
+    expect((await ui.find({ key: `detail:${id}` }))?.text).toMatch(/▸$/)
+    expect(await ui.find({ type: 'Text', text: '寫給第一次用的人：' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '裝好後五分鐘內看得懂總表' })).toBeUndefined()
+
+    // A done step behind the fold opens the same way.
+    expect(await ui.find({ key: `detail:${S1}` })).toBeUndefined()
+    await ui.press({ key: `steps:${B}` })
+    expect((await ui.find({ key: `detail:${S1}` }))?.text).toBe('✓ 定檔案格式 ▸')
+    await ui.press({ key: `detail:${S1}` })
+    expect((await ui.find({ key: `detail:${S1}` }))?.text).toBe('✓ 定檔案格式 ▾')
+    expect(await ui.find({ type: 'Text', text: '每一行一筆紀錄，帶檢查碼' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('a_detail_draws_one_row_per_line', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), entry('step.detail', { step: S2, detail: '  第一行\r\n\r\n\r\n第二\t行 \u001b[31m ' })])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `detail:${S2}` })
+    const rows = await order(ui)
+    const at = rows.indexOf('第一行')
+    expect(at).toBe(rows.indexOf('● 窗格兩個畫面 ▾') + 1)
+    expect(rows.slice(at, at + 3)).toEqual(['第一行', ' ', '第二 行 [31m'])
+    expect(rows[at + 3]).toBe('▸ 做完 1 步')
+    await ui.unmount()
+  }
+})
+
+test('a_step_without_a_real_detail_has_no_toggle', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), entry('step.add', { item: B, step: { id: S3, title: '改 token 驗證' }, detail: '\u0007  ' })])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `steps:${B}` })
+    expect(await detailButtons(ui)).toEqual([])
+    expect(await ui.find({ type: 'Text', text: '○ 改 token 驗證' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '● 窗格兩個畫面' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '✓ 定檔案格式' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('a_detail_written_later_shows_a_toggle_and_no_change_row', ZH, async ($, on) => {
+  const w = await start($, on, [...board()])
+  // Each surface gives a different step its detail, so each starts without one.
+  const later: Record<Surface, { step: string; title: string }> = { terminal: { step: S2, title: '● 窗格兩個畫面' }, desktop: { step: S1, title: '✓ 定檔案格式' } }
+  for (const surface of SURFACES) {
+    const { step, title } = later[surface]
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `steps:${B}` })
+    expect(await ui.find({ key: `detail:${step}` })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: title })).toBeDefined()
+    const before = (await ui.find({ type: 'Button', key: `log:${B}` }))?.text
+    expect(before).toBe('▸ 變動紀錄（5 筆）')
+    const res = await $.tool.call({ tool: tool('update_step'), ops: [{ action: 'detail', step, detail: `兩個畫面各自記得捲到哪 ${surface}` }] })
+    expect(res.deny).toBeUndefined()
+    expect((await ui.find({ key: `detail:${step}` }))?.text).toBe(`${title} ▸`)
+    expect(await ui.find({ type: 'Text', text: title })).toBeUndefined()
+    expect((await ui.find({ type: 'Button', key: `log:${B}` }))?.text).toBe(before)
+    await ui.unmount()
+  }
+})
+
+test('closed_step_details_add_no_overview_rows', ZH, async ($, on) => {
+  const w = await start($, on, [...board()])
+  const bare: Partial<Record<Surface, string[]>> = {}
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `steps:${B}` })
+    bare[surface] = await order(ui)
+    await ui.unmount()
+  }
+  const res = await $.tool.call({
+    tool: tool('update_step'),
+    ops: [
+      { action: 'detail', step: S1, detail: '每一行一筆紀錄，帶檢查碼' },
+      { action: 'detail', step: S2, detail: '上方兩個按鈕切換總表和等你' },
+    ],
+  })
+  expect(res.deny).toBeUndefined()
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `steps:${B}` })
+    expect((await detailButtons(ui)).sort()).toEqual([`detail:${S1}`, `detail:${S2}`].sort())
+    const rows = await order(ui)
+    expect(rows.filter(r => r !== '▸').length).toBe(bare[surface]?.length)
+    expect(rows.some(r => r.includes('每一行一筆紀錄') || r.includes('上方兩個按鈕'))).toBe(false)
+    await ui.unmount()
+  }
+})
+
+test('opening_details_never_touches_the_log', ZH, async ($, on) => {
+  const DETAIL = '上方兩個按鈕切換總表和等你'
+  const entries = [...board(), entry('step.detail', { step: S2, detail: DETAIL })]
+  const w = await start($, on, entries)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    let ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    const before = w.files[LOG]
+    await ui.press({ key: `detail:${S2}` })
+    await ui.press({ key: `detail:${S2}` })
+    await ui.press({ key: `detail:${S2}` })
+    expect(w.files[LOG]).toBe(before)
+    expect(localOf(w).expanded).toContain(`detail:${S2}`)
+
+    await $.prompt.submit({ text: '' })
+    await ui.unmount()
+    ui = await pane($, surface)
+    expect((await ui.find({ key: `detail:${S2}` }))?.text).toMatch(/▾$/)
+    expect(await ui.find({ type: 'Text', text: DETAIL })).toBeDefined()
+    expect(w.files[LOG]).toBe(before)
+    await ui.unmount()
+  }
+  const removed = await $.tool.call({ tool: tool('update_step'), why: '這步不做了', ops: [{ action: 'remove', step: S2 }] })
+  expect(removed.deny).toBeUndefined()
+  await $.prompt.submit({ text: '' })
+  expect(localOf(w).expanded).not.toContain(`detail:${S2}`)
+  expect(localOf(w).expanded).toContain(B)
+})
+
+// The local-mode half of opening_details_never_touches_the_log: a test registers one world, so it gets its own.
+test('opening_details_never_touches_the_local_log', ZH, async ($, on) => {
+  const DETAIL = '上方兩個按鈕切換總表和等你'
+  const l = await startLocal($, on, [...board(), entry('step.detail', { step: S2, detail: DETAIL })])
+  for (const surface of SURFACES) {
+    await fresh($, l)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    const before = l.store.get('log:/repo')
+    await ui.press({ key: `detail:${S2}` })
+    expect(await ui.find({ type: 'Text', text: DETAIL })).toBeDefined()
+    expect(localOf(l).expanded).toContain(`detail:${S2}`)
+    await ui.press({ key: `detail:${S2}` })
+    expect(await ui.find({ type: 'Text', text: DETAIL })).toBeUndefined()
+    expect(l.store.get('log:/repo')).toBe(before)
+    await ui.unmount()
+  }
+})

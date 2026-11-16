@@ -155,3 +155,15 @@ test('forget_keeps_the_open_groups_of_items_and_cards_that_still_exist', async (
   const local = { ...emptyLocal(), expanded: ['group:done', 'steps:A', 'log:A', 'recent:open', 'steps:gone', 'log:gone', 'recent:gone'] }
   expect(forget(local, plan).expanded).toEqual(['group:done', 'steps:A', 'log:A', 'recent:open'])
 })
+
+test('forget_keeps_detail_keys_of_live_steps_and_open_cards', async () => {
+  const plan = await planOf(
+    entry('item.add', { item: { id: 'A', title: 'A', goal: 'g' } }),
+    entry('step.add', { item: 'A', step: { id: 's1', title: 'first' } }),
+    question('open'),
+    question('closed'),
+    entry('card.resolve', { card: 'closed', outcome: 'ok' }),
+  )
+  const local = { ...emptyLocal(), expanded: ['detail:s1', 'detail:gone', 'detail:open', 'detail:closed'] }
+  expect(forget(local, plan).expanded).toEqual(['detail:s1', 'detail:open'])
+})
