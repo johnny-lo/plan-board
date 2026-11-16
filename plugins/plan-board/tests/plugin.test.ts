@@ -211,7 +211,6 @@ test('a_refused_card_or_resolution_detail_writes_nothing', async ($, on) => {
     [{ tool: tool('add_user_action'), action: 'Log in to GitHub', why: 'the push needs it' }, 'detail is required: why the user has to do this'],
     [{ tool: tool('propose_change'), question: 'Add docs?', why: 'users need them', changes: [addItem], detail: 'Users need them.' }, 'detail only repeats the why'],
     [{ tool: tool('resolve_decision'), card: 'q1', outcome: 'LRU', detail: 'lru' }, 'detail only repeats the outcome'],
-    [{ tool: tool('resolve_direct_edit'), action: 'drop', summary: 'a stray line', detail: 7 }, 'detail must be a string'],
   ]
   for (const [input, message] of refusals) {
     const refused = await $.tool.call(input as Parameters<Engine['tool']['call']>[0])

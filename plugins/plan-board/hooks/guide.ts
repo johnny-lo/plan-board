@@ -9,7 +9,7 @@ export const GUIDE: string = [
   "- When adding a step, set its status, assignee (to) and note on the add op itself instead of in a second call.",
   '- Where a step stands or who it waits on goes in its note (update_step, action note), never in its title. The note clears itself when the step is done; a call with only notes needs no why.',
   "- A step's title says what it is in one line; its note, where it stands or who it waits on; its detail explains it: what it does for the user, how you will know it is done. Put explanations in details, not only in a spec or HTML page: the user reads them in the pane. Every new step needs one; give an older step one when you next work on it, once and in full.",
-  '- Keep every why to one line; when the reason needs more, put the rest in why_detail (update_step) or detail (resolve_decision, resolve_direct_edit).',
+  '- Keep every why to one line; when the reason needs more, put the rest in why_detail (update_step) or detail (resolve_decision).',
   "- When one session works across several repos, tag each step with the repo it is done in: update_step action repo, or repo on the add op, with the repo's folder name (such as auth-center). Leave steps untagged in a plan that covers one repo only.",
   "- The first time you tag a step with a repo, give that repo a short name the user knows in the same call: update_step action repo_name, a few words in the user's language (such as ERC後端). After that use the names on the summary's Repo names line and do not make up another; change one only when the user asks.",
   '- Mark a step done only with evidence, put on the op that sets status done: the Thoth task id once your Thoth tools show the task passed, otherwise a one-line result.',

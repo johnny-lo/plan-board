@@ -378,7 +378,7 @@ test('summary_marks_steps_without_a_detail', async () => {
 test('guide_explains_details', () => {
   expect(GUIDE).toContain('its detail explains it: what it does for the user, how you will know it is done')
   expect(GUIDE).toContain('Put explanations in details, not only in a spec or HTML page')
-  expect(GUIDE).toContain('why_detail (update_step)')
+  expect(GUIDE).toContain('put the rest in why_detail (update_step) or detail (resolve_decision).')
   expect(GUIDE).toContain('what choosing it means in practice')
   expect(GUIDE).toContain('why the user has to do this and what happens once it is done')
   expect(GUIDE).toContain('what the plan will look like once the user approves')

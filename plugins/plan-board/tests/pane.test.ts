@@ -1600,6 +1600,8 @@ test('a_long_thought_shows_in_full_below_the_field_while_typing', ZH, async ($, 
 })
 
 type Drawn = { type: string; props?: Record<string, unknown>; children?: (Drawn | string)[] }
+/** The Box props that add blank rows above or below what a Box holds. */
+const VERTICAL = ['marginTop', 'marginBottom', 'paddingTop', 'paddingBottom'] as const
 const nodes = (node: Drawn | string, out: Drawn[] = []): Drawn[] => {
   if (typeof node === 'string') return out
   out.push(node)
@@ -1979,6 +1981,13 @@ test('closed_step_details_add_no_overview_rows', ZH, async ($, on) => {
     const rows = await order(ui)
     expect(rows.filter(r => r !== '▸').length).toBe(bare[surface]?.length)
     expect(rows.some(r => r.includes('每一行一筆紀錄') || r.includes('上方兩個按鈕'))).toBe(false)
+    // The Box a step with a detail draws in is a column with no vertical space of its own, so it adds no blank row.
+    const tree = nodes((await ui.drawn()) as Drawn)
+    for (const step of [S1, S2]) {
+      const box = tree.find(node => node.props?.key === `box:step:${step}`)
+      expect(box?.props?.flexDirection).toBe('column')
+      for (const side of VERTICAL) expect(box?.props?.[side]).toBeUndefined()
+    }
     await ui.unmount()
   }
 })
@@ -2301,6 +2310,11 @@ test('closed_details_add_at_most_one_row_per_card', ZH, async ($, on) => {
       expect(more.length - less.length).toBe(1)
       expect(more.filter(row => row === '▸ 選項細節' || row === '▸ 細節')).toHaveLength(1)
     }
+    // An action card's toggle sits straight in the card's Box; a proposal's sits in a Box that holds only the toggle and adds no vertical space.
+    expect((await boxOfButton(ui, `detail:${AD}`))?.box.props?.key).toBe(`card:box:${AD}`)
+    const wrap = (await boxOfButton(ui, `detail:${PD}`))?.box
+    expect(wrap?.children).toHaveLength(1)
+    for (const side of VERTICAL) expect(wrap?.props?.[side]).toBeUndefined()
     expect((await texts(ui)).some(text => text.includes('那列一眼看完') || text.includes('沒人核准就不會跑') || text.includes('同意之後多一個項目'))).toBe(false)
     await ui.unmount()
 

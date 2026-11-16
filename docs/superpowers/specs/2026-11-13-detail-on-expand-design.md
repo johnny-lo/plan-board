@@ -117,7 +117,7 @@ Johnny 的原話：
 
 ### 7.3 變動紀錄的細節從哪來
 
-`why_detail`；`resolve_decision`、`resolve_direct_edit` 選填的 `detail`；`apply_change` 不加參數，提案卡有 `detail` 時照抄到每一筆，同照抄 `why`（`tools.ts:194`、`200`），沒有就不抄。開卡那筆不帶：細節在卡片上。
+`why_detail`；`resolve_decision` 選填的 `detail`（`resolve_direct_edit` 不收 `detail`）；`apply_change` 不加參數，提案卡有 `detail` 時照抄到每一筆，同照抄 `why`（`tools.ts:194`、`200`），沒有就不抄。開卡那筆不帶：細節在卡片上。
 
 ### 7.4 摘要與 schema
 
@@ -176,7 +176,7 @@ Johnny 的原話：
 `guide.ts` 的 `GUIDE`（英文；措辭可微調，意思不變）：
 
 - note 那條（`guide.ts:10`）後面新增：`- A step's title says what it is in one line; its note, where it stands or who it waits on; its detail explains it: what it does for the user, how you will know it is done. Put explanations in details, not only in a spec or HTML page: the user reads them in the pane. Every new step needs one; give an older step one when you next work on it, once and in full.`
-- 新增：`- Keep every why to one line; when the reason needs more, put the rest in why_detail (update_step) or detail (resolve_decision, resolve_direct_edit).`
+- 新增：`- Keep every why to one line; when the reason needs more, put the rest in why_detail (update_step) or detail (resolve_decision).`
 - `add_decision`、`add_user_action`、superpowers 那幾條（`guide.ts:14`、`15`、`20`）補上要寫的細節，內容照 7.2；項目層那條（`guide.ts:7`）加：`propose_change` 的 detail 只在一行 why 講不完時寫，寫同意之後計畫會變怎樣；使用者會讀的那條（`guide.ts:21`）加 detail，寫明純文字、可換行、不用 markdown、上限 400 格（約 200 個中文字）、只重複標題會被拒。
 
 ## 11. 入口與異常輸入

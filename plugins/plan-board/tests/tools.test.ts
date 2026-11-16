@@ -6,6 +6,7 @@ import { replay } from '../hooks/replay.ts'
 import { TOOLS } from '../hooks/tools.ts'
 import type { ToolContext, ToolResult } from '../hooks/tools.ts'
 import { entry, logText } from './fixtures.ts'
+import { world } from './world.ts'
 import type { Entry, Plan } from '../types'
 
 const NOW = '2026-10-08T00:00:00.000Z'
@@ -318,7 +319,7 @@ test('schemas_list_required_fields', () => {
   const props = (name: keyof typeof TOOLS) => (TOOLS[name].inputSchema as Schema).properties
   const option = props('add_decision').options.items as Schema & { required: string[] }
   expect(option.required).toEqual(['label', 'effect', 'detail'])
-  const details = [option.properties.detail, ...(['propose_change', 'add_user_action', 'resolve_decision', 'resolve_direct_edit'] as const).map((n) => props(n).detail)]
+  const details = [option.properties.detail, ...(['propose_change', 'add_user_action', 'resolve_decision'] as const).map((n) => props(n).detail)]
   for (const detail of details) expect(detail?.description?.length ?? 0).toBeGreaterThan(40)
   expect(required('propose_change')).not.toContain('detail')
   expect(required('resolve_decision')).not.toContain('detail')
@@ -894,11 +895,60 @@ test('resolve_tools_take_an_optional_detail', async () => {
   const flagged = await planOf(base, tail)
   expect(flagged.flagged.length).toBe(1)
   const edit = (extra: object) => TOOLS.resolve_direct_edit.run(ctxOf(flagged), { action: 'keep', summary: 'added a step', ...extra })
-  const kept = good(edit({ detail: ' 手動加的步驟保留，\r\n之後照常更新 ' }))
-  expect(kept.entries[0].detail).toBe('手動加的步驟保留，\n之後照常更新')
-  const after = await replay(await nextText((await logText(base)) + tail, kept.entries, []))
-  expect(after.flagged).toEqual([])
-  expect(after.applied[after.applied.length - 1].detail).toBe('手動加的步驟保留，\n之後照常更新')
-  expect(bad(edit({ detail: 'Added a step.' }))).toBe('detail only repeats the summary; say what it leaves out')
-  for (const blank of [{}, { detail: '' }]) expect(Object.hasOwn(good(edit(blank)).entries[0], 'detail')).toBe(false)
+  // resolve_direct_edit takes no detail: its entry is on no item's history, so the pane could never show one.
+  // A detail passed anyway is ignored like any other property the tool does not know.
+  expect(JSON.stringify(TOOLS.resolve_direct_edit.inputSchema)).not.toContain('"detail"')
+  for (const extra of [{}, { detail: ' 手動加的步驟保留，\r\n之後照常更新 ' }, { detail: 'Added a step.' }, { detail: 4 }]) {
+    const kept = good(edit(extra))
+    expect(kept.entries).toEqual(good(edit({ unknown_field: 'x' })).entries)
+    expect(Object.hasOwn(kept.entries[0], 'detail')).toBe(false)
+    const after = await replay(await nextText((await logText(base)) + tail, kept.entries, []))
+    expect(after.flagged).toEqual([])
+    const written = after.applied[after.applied.length - 1]
+    expect(written.kind).toBe('edit.keep')
+    expect(Object.hasOwn(written, 'detail')).toBe(false)
+  }
+})
+
+// The id check (Global Constraints ④) on the ids of steps and cards, not only items, through the tool as the engine calls it.
+const LOG = '/repo/plan/log.jsonl'
+const ITEM = 'alpha01'
+const STEP = 'design02'
+const CARD = 'cafe0123'
+const idPlan = () => [entry('item.add', { item: item(ITEM, '介面') }), step(ITEM, STEP, '畫草圖'), question(CARD)]
+
+test('a_step_detail_naming_a_step_or_card_id_is_refused_and_writes_nothing', async ($, on) => {
+  const w = world(on, { [LOG]: await logText(idPlan()) })
+  await $.session.start({ cwd: '/repo' })
+  const add = (detail: string) => $.tool.call({ tool: 'mcp__plan-board__update_step', why: '補一步', ops: [{ action: 'add', item: ITEM, title: '定配色', detail }] })
+
+  for (const id of [STEP, CARD]) {
+    const before = w.files[LOG]
+    const refused = await add(`接著 ${id} 之後再做`)
+    expect(refused.deny).toContain(`ops[0].detail names plan ids (${id}); use the names the user sees`)
+    expect(w.files[LOG]).toBe(before)
+  }
+  // Part of a longer word is no id: the same call goes through once the id is not a whole word.
+  const before = w.files[LOG]
+  expect((await add(`接著 ${STEP}x 之後再做`)).deny).toBeUndefined()
+  expect(w.files[LOG].length).toBeGreaterThan(before.length)
+})
+
+test('the_id_check_uses_the_plan_as_the_earlier_ops_leave_it', async ($, on) => {
+  const w = world(on, { [LOG]: await logText(idPlan()) })
+  await $.session.start({ cwd: '/repo' })
+  const before = w.files[LOG]
+  const res = await $.tool.call({
+    tool: 'mcp__plan-board__update_step',
+    why: '換做法',
+    ops: [
+      { action: 'remove', step: STEP },
+      { action: 'add', item: ITEM, title: '定配色', detail: `取代原本的 ${STEP}，先定好顏色` },
+    ],
+  })
+  expect(res.deny).toBeUndefined()
+  const plan = await replay(w.files[LOG])
+  expect(w.files[LOG].startsWith(before)).toBe(true)
+  expect(Object.hasOwn(plan.steps, STEP)).toBe(false)
+  expect(Object.values(plan.steps).map((s) => s.detail)).toContain(`取代原本的 ${STEP}，先定好顏色`)
 })

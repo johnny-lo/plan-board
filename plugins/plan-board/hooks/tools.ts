@@ -476,7 +476,6 @@ const resolveDirectEdit = guard((ctx, input) => {
   const action = o.action
   if (action !== 'keep' && action !== 'drop') return fail('action must be "keep" or "drop"')
   const summary = text(o, 'summary')
-  const detail = detailOf(o, 'detail', 'detail', [{ name: 'summary', text: summary }], ctx.plan)
   const cardId = optText(o, 'card')
   const flagged = ctx.plan.flagged
   if (flagged.length === 0) return fail('no directly edited lines are flagged; there is nothing to resolve')
@@ -492,7 +491,7 @@ const resolveDirectEdit = guard((ctx, input) => {
     }
   }
   const lines = flagged.map((f) => f.hash)
-  const entry = make(ctx, action === 'keep' ? 'edit.keep' : 'edit.drop', { lines, summary }, summary, { type: 'direct-edit' }, detail)
+  const entry = make(ctx, action === 'keep' ? 'edit.keep' : 'edit.drop', { lines, summary }, summary, { type: 'direct-edit' })
   const verb = action === 'keep' ? 'Kept' : 'Dropped'
   return accept(ctx, [entry], `${verb} ${lines.length} directly edited line(s).`, action === 'drop' ? lines : [])
 })
@@ -677,11 +676,6 @@ export const TOOLS: Record<ToolName, { description: string; inputSchema: object;
         action: { type: 'string', enum: ['keep', 'drop'] },
         summary: { ...str, description: 'What the direct edit changed.' },
         card: { ...str, description: 'Resolved card that asked the user; required when keeping item changes.' },
-        detail: {
-          ...str,
-          description:
-            'Optional longer explanation of the summary, shown when the user opens the change log entry; write it only when one line cannot say it. Plain text within 400 cells (about 200 Chinese characters) and 8 lines; must say more than the summary and name no plan ids.',
-        },
       },
       required: ['action', 'summary'],
     },
