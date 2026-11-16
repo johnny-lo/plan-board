@@ -395,9 +395,9 @@ git commit -m "feat(plan-board): update_step takes a detail on add, a detail op 
 
 **Interfaces:**
 - Consumes: `detailOf`、`make(…, detail?)`（Task 4）；`Title`（Task 2）。
-- Produces：`card.options[i].detail`（`add_decision` 必填）；`card.detail`（`add_user_action` 必填、`propose_change` 選填）；`apply_change` 把提案卡的 `detail` 抄到它寫的每一筆（各個改動和 `card.resolve`）；`resolve_decision`、`resolve_direct_edit` 選填的 `detail` 寫在那一筆的最外層。開卡那筆 `card.open` 不帶最外層 `detail`。
+- Produces：`card.options[i].detail`（`add_decision` 必填）；`card.detail`（`add_user_action` 必填、`propose_change` 選填）；`apply_change` 把提案卡的 `detail` 抄到它寫的每一筆（各個改動和 `card.resolve`）；`resolve_decision` 選填的 `detail` 寫在那一筆的最外層；`resolve_direct_edit` 不收 `detail`（它的紀錄不在任何項目的變動紀錄裡，畫面看不到）。開卡那筆 `card.open` 不帶最外層 `detail`。
 
-比對重複的欄位（設計 11.3）：選項 → `label`、`effect`；`add_user_action` → `action`、`why`；`propose_change` → `question`、`why`；`resolve_decision` → `outcome`；`resolve_direct_edit` → `summary`。`add_decision` 每個選項先查 `label`、`effect`，再查 `detail`（`tools.test.ts:213` 預期先報 `effect`）。schema：選項的 `required` 加 `detail`、`add_user_action` 的 `required` 加 `detail`，新參數都附 `description`。
+比對重複的欄位（設計 11.3）：選項 → `label`、`effect`；`add_user_action` → `action`、`why`；`propose_change` → `question`、`why`；`resolve_decision` → `outcome`。`add_decision` 每個選項先查 `label`、`effect`，再查 `detail`（`tools.test.ts:213` 預期先報 `effect`）。schema：選項的 `required` 加 `detail`、`add_user_action` 的 `required` 加 `detail`，新參數都附 `description`。
 
 - [ ] **Step 1: 寫會失敗的測試** `tests/tools.test.ts`
 
@@ -422,7 +422,7 @@ test('apply_change_copies_the_card_detail_to_every_entry')      // 驗收 8 的�
 test('resolve_tools_take_an_optional_detail')
   // resolve_decision { card, outcome:'選了 LRU', detail:'記憶體夠用，\n之後再看命中率' } → entries[0].detail 是那段
   // detail '選了LRU。' → 'detail only repeats the outcome; say what it leaves out'
-  // resolve_direct_edit（有被標記的行）帶 detail → entries[0].detail；沒帶 → 沒有 detail 鍵
+  // resolve_direct_edit（有被標記的行）：schema 沒有 detail；帶了也被忽略，寫出的那一筆沒有 detail 鍵
 ```
 
 - [ ] **Step 2: 跑測試，確認失敗**
@@ -459,7 +459,7 @@ git commit -m "feat(plan-board): details on decision options, action cards, prop
 
 ```ts
   "- A step's title says what it is in one line; its note, where it stands or who it waits on; its detail explains it: what it does for the user, how you will know it is done. Put explanations in details, not only in a spec or HTML page: the user reads them in the pane. Every new step needs one; give an older step one when you next work on it, once and in full.",
-  '- Keep every why to one line; when the reason needs more, put the rest in why_detail (update_step) or detail (resolve_decision, resolve_direct_edit).',
+  '- Keep every why to one line; when the reason needs more, put the rest in why_detail (update_step) or detail (resolve_decision).',
 ```
 
 - `guide.ts:7` 結尾加：`Give propose_change a detail only when the one-line why cannot say it: what the plan will look like once the user approves.`
