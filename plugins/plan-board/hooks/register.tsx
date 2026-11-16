@@ -326,7 +326,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    paneView($.ui.resolve(e), await read($, plan), await read($, local), await read($, typing), lang, {
+    paneView($.ui.resolve(e), await read($, plan), await read($, local), await read($, typing), lang, e.props.bodyColumns, {
       toggle: id => toggle($, id),
       show: async view => save($, { ...(await read($, local)), view }),
       choose: (card, choice) => act($, card, (current, at) => withChoice(current, card.id, choice, at)),

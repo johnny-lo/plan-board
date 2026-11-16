@@ -112,8 +112,8 @@ async function fresh($: Engine, w: World): Promise<void> {
   w.submitted.length = 0
 }
 
-const pane = ($: Engine, surface: Surface) =>
-  $.ui.mount({ plugin: 'plan-board', surface, component: 'Pane', requestId: 'plan-board', props: PANE_PROPS })
+const pane = ($: Engine, surface: Surface, columns = PANE_PROPS.bodyColumns) =>
+  $.ui.mount({ plugin: 'plan-board', surface, component: 'Pane', requestId: 'plan-board', props: { ...PANE_PROPS, bodyColumns: columns } })
 const band = ($: Engine, surface: Surface, props: Record<string, unknown> = BAND_PROPS) =>
   $.ui.mount({ plugin: 'plan-board', surface, component: 'AbovePrompt', props: props as never })
 
@@ -126,14 +126,48 @@ async function until(ui: Ui, isDone: () => boolean): Promise<void> {
 
 const localOf = (w: World) => w.store.get(LOCAL) as { staged: Record<string, unknown>; sent: Record<string, { choice?: string }>; expanded: string[]; view: string }
 
+/** The label of the Button keyed `key`: the words it is named by. Its text is what its look draws, which may differ. */
+const labelOf = async (ui: Ui, key: string): Promise<unknown> => (await ui.find({ type: 'Button', key }))?.props.label
+/** The Buttons whose label is `label` exactly, or matches the pattern. */
+async function labelled(ui: Ui, label: string | RegExp) {
+  return (await ui.findAll({ type: 'Button' })).filter(found => (typeof label === 'string' ? found.props.label === label : label.test(String(found.props.label))))
+}
+
+type Drawn = { type: string; props?: Record<string, unknown>; children?: (Drawn | string)[] }
+/** A drawn Text as drawn() hands it over: its props, and its words or parts. */
+const word = (children: string | (Drawn | string)[], props?: Record<string, unknown>): Drawn => ({
+  type: 'Text',
+  ...(props === undefined ? {} : { props }),
+  children: typeof children === 'string' ? [children] : children,
+})
+/** Bold as each surface draws it: the desktop adds a weight. */
+const BOLD: Record<Surface, Record<string, unknown>> = { terminal: { bold: true }, desktop: { bold: true, weight: 'semibold' } }
+/** A drawn node without the engine's press handle, to compare with what a test writes out. */
+const bare = (node: Drawn | string | undefined): unknown => {
+  if (node === undefined || typeof node === 'string') return node
+  const { type, props, children } = node
+  return { type, ...(props === undefined ? {} : { props }), ...(children === undefined ? {} : { children: children.map(bare) }) }
+}
+/** Every node of a drawn tree, depth first. */
+const nodes = (node: Drawn | string, out: Drawn[] = []): Drawn[] => {
+  if (typeof node === 'string') return out
+  out.push(node)
+  for (const child of node.children ?? []) nodes(child, out)
+  return out
+}
+/** The Box keyed `key` in the pane. */
+async function boxKeyed(ui: Ui, key: string): Promise<Drawn | undefined> {
+  return nodes((await ui.drawn()) as Drawn).find(node => node.props?.key === key)
+}
+
 async function texts(ui: Ui): Promise<string[]> {
   return [...(await ui.findAll({ type: 'Text' })), ...(await ui.findAll({ type: 'Button' }))].map(found => found.text)
 }
 
 /** Opens what an open item keeps folded: its done steps, its log and the runs of step changes in it. */
 async function openFolds(ui: Ui): Promise<void> {
-  for (const found of await ui.findAll({ type: 'Button', text: /^▸ (做完 \d+ 步|變動紀錄（)/ })) await ui.press({ key: found.key as string })
-  for (const found of await ui.findAll({ type: 'Button', text: /▸ 步驟：/ })) await ui.press({ key: found.key as string })
+  for (const found of await labelled(ui, /^▸ (做完 \d+ 步|變動紀錄（)/)) await ui.press({ key: found.key as string })
+  for (const found of await labelled(ui, /▸ 步驟：/)) await ui.press({ key: found.key as string })
 }
 
 /** Presses every detail toggle that is drawn, so the details are on screen. */
@@ -151,13 +185,13 @@ test('overview_shows_states_and_expands_item', ZH, async ($, on) => {
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await pane($, surface)
-    expect(await ui.find({ type: 'Button', text: '▸ 設定精靈 · 下一個' })).toBeDefined()
-    expect(await ui.find({ type: 'Button', text: '▸ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
-    expect(await ui.find({ type: 'Button', text: '▸ 英文文件 · 之後' })).toBeDefined()
+    expect(await labelOf(ui, `item:${C}`)).toBe('▸ 設定精靈 · 下一個')
+    expect(await labelOf(ui, `item:${B}`)).toBe('▸ 決定看板 v1 · 進行中 ⚑')
+    expect(await labelOf(ui, `item:${D}`)).toBe('▸ 英文文件 · 之後')
     expect(await ui.find({ text: '做完的樣子：總表和卡片都看得到' })).toBeUndefined()
 
     await ui.press({ key: `item:${B}` })
-    expect(await ui.find({ type: 'Button', text: '▾ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
+    expect(await labelOf(ui, `item:${B}`)).toBe('▾ 決定看板 v1 · 進行中 ⚑')
     expect(await ui.find({ text: '做完的樣子：總表和卡片都看得到' })).toBeDefined()
     expect(await ui.find({ text: '✓ 定檔案格式' })).toBeUndefined()
     expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
@@ -166,7 +200,7 @@ test('overview_shows_states_and_expands_item', ZH, async ($, on) => {
     await ui.press({ key: `log:${B}` })
     expect(await ui.find({ text: '✓ 定檔案格式' })).toBeDefined()
     expect(await ui.find({ text: 'Thoth pass' })).toBeDefined()
-    expect(await ui.find({ type: 'Button', text: /▸ 步驟：新增 2 個、做完 1 個、開始 1 個$/ })).toBeDefined()
+    expect(await labelled(ui, /▸ 步驟：新增 2 個、做完 1 個、開始 1 個$/)).toHaveLength(1)
     expect(await ui.find({ type: 'Text', text: /^原因：/ })).toBeUndefined()
     expect(localOf(w).expanded).toEqual([B, `steps:${B}`, `log:${B}`])
 
@@ -181,16 +215,15 @@ test('cards_view_expands_only_the_first', ZH, async ($, on) => {
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await pane($, surface)
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（2）' })).toBeDefined()
+    expect(await labelOf(ui, 'view:cards')).toBe('等你（2）')
     await ui.press({ key: 'view:cards' })
     expect(localOf(w).view).toBe('cards')
 
-    expect(await ui.find({ type: 'Text', text: '為什麼現在問：' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '一列只放得下兩三件事' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: '為什麼現在問：一列只放得下兩三件事' }))?.text).toBe('為什麼現在問：一列只放得下兩三件事')
     expect(await ui.find({ type: 'Text', text: '決定看板 v1 › 窗格兩個畫面' })).toBeDefined()
     expect(await ui.find({ type: 'Button', key: `${Q1}:0` })).toBeDefined()
     expect(await ui.find({ type: 'Button', key: `${Q1}:1` })).toBeDefined()
-    expect(await ui.find({ text: '（建議）' })).toBeDefined()
+    expect(bare(await ui.find({ type: 'Text', text: ' 建議 ' }))).toEqual(word(' 建議 ', { inverse: true, color: 'suggestion' }))
     expect(await ui.find({ key: `${Q1}:note` })).toBeDefined()
     expect(await ui.find({ key: `${Q1}:x` })).toBeDefined()
 
@@ -392,13 +425,23 @@ test('card_of_removed_item_shows_other', ZH, async ($, on) => {
   }
 })
 
+/** What the band's line holds when it has room: the word, the pills, the warning; each as drawn. */
+const bandLine = async (ui: Ui) => ((await boxKeyed(ui, 'band:line'))?.children ?? []).map(bare)
+const DOING_1 = word(' 1 項進行中 ', { inverse: true, color: 'suggestion' })
+const bandAt = (columns: number) => ({ ...BAND_PROPS, bodyColumns: columns })
+
 test('band_text_and_edit_warning', ZH, async ($, on) => {
   const w = await start($, on, [...board(), blockedOnS2(), loose()])
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await band($, surface)
-    const line = await ui.find({ type: 'Text', text: /計畫：/ })
-    expect(line?.text).toBe('計畫：1 項進行中 · 2 件事等你')
+    // With room: "計畫", a blue pill for what is in progress, an amber one for what waits, Open on the right.
+    expect(await bandLine(ui)).toEqual([word('計畫'), DOING_1, word(' 2 件事等你 ', { inverse: true, color: 'warning' })])
+    expect(bare((await boxKeyed(ui, 'band:line')) as Drawn)).toMatchObject({ props: { key: 'band:line', flexDirection: 'row', gap: 1, flexShrink: 1 } })
+    const tree = (await ui.drawn()) as Drawn
+    const row = parentsOf(tree).get(nodes(tree).find(node => node.props?.key === 'band:line') as Drawn)
+    expect(row?.props).toEqual({ flexDirection: 'row', justifyContent: 'space-between', gap: 1 })
+    expect(bare(row?.children?.[1] as Drawn)).toEqual({ type: 'Button', props: { key: 'open', label: '打開' } })
     expect(await ui.find({ text: '⚠' })).toBeUndefined()
     await ui.press({ key: 'open' })
     expect(w.opened).toContain('plan-board')
@@ -406,7 +449,7 @@ test('band_text_and_edit_warning', ZH, async ($, on) => {
 
     // A survey holds the band: the engine's own drawing stands.
     const survey = await band($, surface, { ...BAND_PROPS, hasSurvey: true })
-    expect(await survey.find({ text: /計畫：/ })).toBeUndefined()
+    expect(await survey.find({ text: /計畫/ })).toBeUndefined()
     expect(await survey.find({ text: 'engine band' })).toBeDefined()
     await survey.unmount()
   }
@@ -416,22 +459,118 @@ test('band_text_and_edit_warning', ZH, async ($, on) => {
   await $.prompt.submit({ text: '' })
   for (const surface of SURFACES) {
     const sent = await band($, surface)
-    expect((await sent.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 件事等你')
+    expect(await bandLine(sent)).toEqual([word('計畫'), DOING_1, word(' 1 件事等你 ', { inverse: true, color: 'warning' })])
     await sent.unmount()
   }
 
-  // A line edited by hand: the band says so.
+  // A line edited by hand: the band says so, in amber.
   w.files[LOG] += 'oops\n'
   await $.prompt.submit({ text: '' })
   for (const surface of SURFACES) {
     const ui = await band($, surface)
-    const warned = await ui.find({ type: 'Text', text: /計畫：/ })
-    expect(warned?.text).toBe('計畫：1 項進行中 · 1 件事等你 · ⚠ 計畫被直接改過')
+    expect(await bandLine(ui)).toEqual([
+      word('計畫'),
+      DOING_1,
+      word(' 1 件事等你 ', { inverse: true, color: 'warning' }),
+      word('⚠ 計畫被直接改過', { color: 'warning' }),
+    ])
     await ui.unmount()
     const overview = await pane($, surface)
-    expect(await overview.find({ text: '計畫被直接改過，等 AI 檢查' })).toBeDefined()
+    expect(bare(await overview.find({ type: 'Text', text: '計畫被直接改過，等 AI 檢查' }))).toEqual(word('計畫被直接改過，等 AI 檢查', { color: 'warning', wrap: 'wrap' }))
     await overview.unmount()
   }
+})
+
+test('band_falls_back_to_the_single_line_when_the_pills_do_not_fit', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), blockedOnS2(), loose()])
+  /** The single line of 0.5.x: the text, cut to fit, then Open. */
+  const single = async (ui: Ui) => {
+    const line = await ui.find({ type: 'Text', text: /計畫：/ })
+    const place = line === undefined ? undefined : await parentOf(ui, String(line.text))
+    return { text: line?.text, row: place?.box.props, open: bare(place?.box.children?.[1] as Drawn), pills: await boxKeyed(ui, 'band:line') }
+  }
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    // 39 cells: the pills need 30 and Open 9 more, so they fit exactly.
+    let ui = await band($, surface, bandAt(39))
+    expect(await bandLine(ui)).toEqual([word('計畫'), DOING_1, word(' 2 件事等你 ', { inverse: true, color: 'warning' })])
+    await ui.unmount()
+    // 38 cells: one short; the band draws the line of 0.5.x, cut where it runs out.
+    ui = await band($, surface, bandAt(38))
+    expect(await single(ui)).toEqual({
+      text: '計畫：1 項進行中 · 2 件事等你',
+      row: { flexDirection: 'row', gap: 1 },
+      open: { type: 'Button', props: { key: 'open', label: '打開' } },
+      pills: undefined,
+    })
+    await ui.unmount()
+    ui = await band($, surface, bandAt(29))
+    expect((await single(ui)).text).toBe('計畫：1 項進行中 · …')
+    await ui.unmount()
+  }
+  // With the warning the pills need 47 cells: at 55 they do not fit with Open, as the design's example shows.
+  w.files[LOG] += 'oops\n'
+  await $.prompt.submit({ text: '' })
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await band($, surface, bandAt(55))
+    expect((await single(ui)).text).toBe('計畫：1 項進行中 · 2 件事等你 · ⚠ 計畫被直接…')
+    await ui.unmount()
+    const wide = await band($, surface, bandAt(56))
+    expect(await bandLine(wide)).toEqual([word('計畫'), DOING_1, word(' 2 件事等你 ', { inverse: true, color: 'warning' }), word('⚠ 計畫被直接改過', { color: 'warning' })])
+    await wide.unmount()
+  }
+})
+
+test('band_in_english_has_pills_and_falls_back_the_same_way', async ($, on) => {
+  const w = await start($, on, [...board(), loose()])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await band($, surface)
+    expect(await bandLine(ui)).toEqual([word('Plan'), word(' 1 in progress ', { inverse: true, color: 'suggestion' }), word(' 1 waiting for you ', { inverse: true, color: 'warning' })])
+    await ui.unmount()
+    // "Plan" 4, the pills 15 and 19, two gaps: 40; Open takes 9 more.
+    const fits = await band($, surface, bandAt(49))
+    expect(await boxKeyed(fits, 'band:line')).toBeDefined()
+    await fits.unmount()
+    const narrow = await band($, surface, bandAt(48))
+    expect(await boxKeyed(narrow, 'band:line')).toBeUndefined()
+    expect((await narrow.find({ type: 'Text', text: /^Plan:/ }))?.text).toBe('Plan: 1 in progress · 1 waiting for you')
+    await narrow.unmount()
+  }
+  // Nothing waiting: the count is dim words, not a pill.
+  w.store.set(LOCAL, { staged: {}, sent: { [Q2]: { choice: '加', at: 1 } }, expanded: [], view: 'overview' })
+  await $.prompt.submit({ text: '' })
+  const quiet = await band($, 'terminal')
+  expect(await bandLine(quiet)).toEqual([word('Plan'), word(' 1 in progress ', { inverse: true, color: 'suggestion' }), word('0 waiting for you', { dimColor: true })])
+  await quiet.unmount()
+})
+
+test('tabs_are_a_pill_when_chosen_and_words_otherwise', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), blockedOnS2(), loose()])
+  const tab = async (ui: Ui, key: string) => bare((await ui.find({ type: 'Button', key })) as unknown as Drawn)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    // The chosen tab is a blue pill; "waiting" in amber while something waits; the keys and labels are as before.
+    expect(await tab(ui, 'view:overview')).toEqual({ type: 'Button', props: { key: 'view:overview', label: '總表', plain: true }, children: [word(' 總表 ', { inverse: true, color: 'suggestion' })] })
+    expect(await tab(ui, 'view:cards')).toEqual({ type: 'Button', props: { key: 'view:cards', label: '等你（2）', plain: true }, children: [word('等你（2）', { color: 'warning' })] })
+    await ui.press({ key: 'view:cards' })
+    expect(await tab(ui, 'view:overview')).toEqual({ type: 'Button', props: { key: 'view:overview', label: '總表', plain: true }, children: [word('總表')] })
+    expect(await tab(ui, 'view:cards')).toEqual({ type: 'Button', props: { key: 'view:cards', label: '等你（2）', plain: true }, children: [word(' 等你（2） ', { inverse: true, color: 'suggestion' })] })
+    // The send button is as it was.
+    await ui.press({ key: `card:${Q2}` })
+    await ui.press({ key: `${Q2}:0` })
+    expect(bare((await ui.find({ type: 'Button', key: 'send' })) as unknown as Drawn)).toEqual({ type: 'Button', props: { key: 'send', label: '送出 1 個決定', variant: 'primary', hotkey: 's' }, children: [] })
+    await ui.press({ key: 'view:overview' })
+    await ui.unmount()
+  }
+  // Nothing waits: the waiting tab is dim.
+  w.store.set(LOCAL, { staged: {}, sent: { [Q1]: { choice: '顯示', at: 1 }, [Q2]: { choice: '加', at: 1 } }, expanded: [], view: 'overview' })
+  await $.prompt.submit({ text: '' })
+  const ui = await pane($, 'terminal')
+  expect(await tab(ui, 'view:cards')).toEqual({ type: 'Button', props: { key: 'view:cards', label: '等你（0）', plain: true }, children: [word('等你（0）', { dimColor: true })] })
+  await ui.unmount()
 })
 
 test('band_keeps_what_the_mods_after_it_draw', ZH, async ($, on) => {
@@ -439,7 +578,7 @@ test('band_keeps_what_the_mods_after_it_draw', ZH, async ($, on) => {
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await band($, surface)
-    expect(await ui.find({ type: 'Text', text: /計畫：/ })).toBeDefined()
+    expect(await boxKeyed(ui, 'band:line')).toBeDefined()
     expect(await ui.find({ text: 'engine band' })).toBeDefined()
     // The plan's line sits above what the others drew.
     expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { flexDirection: 'column' }, children: [{ type: 'Box' }, ENGINE_BAND] })
@@ -454,7 +593,7 @@ test('band_is_only_the_plan_line_when_nothing_is_drawn_below', ZH, async ($, on)
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await band($, surface)
-    expect((await ui.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 件事等你')
+    expect(await bandLine(ui)).toEqual([word('計畫'), DOING_1, word(' 1 件事等你 ', { inverse: true, color: 'warning' })])
     expect(await ui.find({ key: 'open' })).toBeDefined()
     expect(await ui.find({ text: 'engine band' })).toBeUndefined()
     await ui.unmount()
@@ -469,7 +608,7 @@ test('empty_repo_shows_hint_and_engine_band', ZH,async ($, on) => {
     expect(await ui.find({ text: '這個 repo 還沒有計畫' })).toBeDefined()
     await ui.press({ key: 'view:cards' })
     expect(await ui.find({ text: '✓ 目前沒有等你的事' })).toBeDefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+    expect(await labelOf(ui, 'view:cards')).toBe('等你（0）')
     await ui.unmount()
 
     const line = await band($, surface)
@@ -560,8 +699,8 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
     await pressDetails(ui)
     await pressHistoryRows(ui)
     seen.push(...(await texts(ui)))
-    expect(seen).toContain('· auth-center 1/1')
-    expect(seen).toContain('· ERC後端 0/1 · auth-center 0/1')
+    expect(seen).toContain('auth-center 1/1')
+    expect(seen).toContain('ERC後端 0/1 · auth-center 0/1')
     expect(seen.some(text => /^變動紀錄（\d+ 筆）$/.test(text) || text.includes('▾ 變動紀錄（'))).toBe(true)
     expect(seen.some(text => text.includes('你在「要不要先做決定看板？」選了同意'))).toBe(true)
     expect(seen.some(text => text.includes('你在對話裡說：「照你的建議」'))).toBe(true)
@@ -584,7 +723,8 @@ test('no_ids_in_zh_tw_text', ZH, async ($, on) => {
   }
 })
 
-/** The rows 0.4.2 (3fb1e29) drew for `everything()`, copied from a run of that code's behaviour; this stays as it is until the version that changes it ships. */
+/** The rows 0.4.2 (3fb1e29) drew for `everything()`, copied from a run of that code's behaviour. 0.6.0 draws them differently (ROWS_0_6_0);
+ *  they stay to check that no row's words were lost. */
 const OLD_ROWS: string[] = [
   '總表',
   '等你（4）',
@@ -882,7 +1022,8 @@ const OLD_ROWS: string[] = [
   'input:e2e2e2e2:note',
 ]
 
-test('old_logs_draw_the_same_rows_as_0_4_2', ZH, async ($, on) => {
+/** The rows `everything()` draws with every item, fold, history row and card open, on both surfaces, times as MM/DD hh:mm. */
+async function everythingRows($: Engine, on: Parameters<typeof world>[0]): Promise<string[]> {
   expect((await replay(await logText(everything()))).flagged).toEqual([])
   const w = await start($, on, everything())
   const rows: string[] = []
@@ -904,7 +1045,198 @@ test('old_logs_draw_the_same_rows_as_0_4_2', ZH, async ($, on) => {
     rows.push(...(await order(ui)))
     await ui.unmount()
   }
-  expect(rows.map(r => r.replace(/\d\d\/\d\d \d\d:\d\d/g, 'MM/DD hh:mm'))).toEqual(OLD_ROWS)
+  return rows.map(r => r.replace(/\d\d\/\d\d \d\d:\d\d/g, 'MM/DD hh:mm'))
+}
+
+/** A row's words with what 0.6.0 draws differently taken out: the ▸▾ arrows, the " · " before a state word,
+ *  the "· " that led a repo's progress, the brackets of （建議）. */
+const wordsOf = (row: string): string =>
+  row
+    .replace(/[▸▾] /g, '')
+    .replace(/[▸▾]/g, '')
+    .replace(/ · (?=(進行中|做完|下一個|之後)( ⚑)?$)/, ' ')
+    .replace(/^· /, '')
+    .replace('（建議）', '建議')
+    .trim()
+
+/** The rows 0.6.0 draws for `everything()` on each surface, copied from a run of this code; buttons as their labels, the new pills, bars and counts as rows of their own. */
+const ROWS_0_6_0: string[] = [
+  '總表',
+  '等你（4）',
+  '▾ 決定看板 v1 · 進行中 ⚑',
+  ' 進行中 ',
+  '[██      ]',
+  '1/4',
+  'ERC後端 0/1 · auth-center 0/1',
+  '做完的樣子：總表和卡片都看得到，不用離開 Claude Code',
+  '⚑',
+  'ERC後端 ·',
+  '窗格兩個畫面',
+  '派給 claude-b',
+  '等你處理：在終端機跑 thoth checks approve',
+  '○ 輸入框上方一列文字',
+  '○',
+  'auth-center ·',
+  '改 token 驗證',
+  '▾ 做完 1 步',
+  '✓ 定檔案格式',
+  '派給 Thoth 任務',
+  'Thoth pass',
+  '▾ 變動紀錄（19 筆）',
+  'MM/DD hh:mm 卡片 提出「調整項目？」',
+  '原因：test',
+  'MM/DD hh:mm 卡片 提出「輸入框上方要不要顯示做完的數量？」',
+  '原因：test',
+  'MM/DD hh:mm 卡片 請你「在終端機跑 thoth checks approve」',
+  '原因：test',
+  'MM/DD hh:mm ▾ 步驟：新增 1 個、改名 1 個、移動 2 個、改派 2 個、改標 repo 1 個',
+  'MM/DD hh:mm 步驟 新增「改 token 驗證」到「決定看板 v1」（auth-center）',
+  '原因：test',
+  'MM/DD hh:mm 步驟 「窗格兩個畫面」標成 ERC後端',
+  '原因：test',
+  'MM/DD hh:mm 步驟 「輸入框上方一列文字」移到「決定看板 v1」',
+  'MM/DD hh:mm 步驟 「輸入框上方一列文字」移到「設定精靈 v2」',
+  'MM/DD hh:mm 步驟 改名「輸入框上方一列」→「輸入框上方一列文字」',
+  '原因：test',
+  'MM/DD hh:mm 步驟 「定檔案格式」派給 Thoth 任務',
+  '原因：test',
+  'MM/DD hh:mm 步驟 「窗格兩個畫面」派給 claude-b',
+  '原因：test',
+  'MM/DD hh:mm 項目 修改「決定看板 v1」：做完的樣子改成「總表和卡片都看得到，不用離開 Claude Code」 · 你在「要不要先做決定看板？」選了同意',
+  '原因：使用者要求',
+  'MM/DD hh:mm 卡片 結案「要不要先做決定看板？」：approved · 你在「要不要先做決定看板？」選了同意',
+  '原因：test',
+  'MM/DD hh:mm 卡片 提出「要不要先做決定看板？」',
+  '原因：test',
+  'MM/DD hh:mm ▾ 步驟：新增 3 個、做完 1 個、開始 1 個',
+  'MM/DD hh:mm 步驟 新增「輸入框上方一列」到「決定看板 v1」',
+  '原因：一列要單獨測',
+  'MM/DD hh:mm 步驟 「窗格兩個畫面」→ 進行中',
+  '原因：test',
+  'MM/DD hh:mm 步驟 「定檔案格式」→ 做完 · Thoth pass',
+  '原因：面板測試全過',
+  'MM/DD hh:mm 步驟 新增「窗格兩個畫面」到「決定看板 v1」',
+  '原因：test',
+  'MM/DD hh:mm 步驟 新增「定檔案格式」到「決定看板 v1」',
+  '原因：test',
+  'MM/DD hh:mm 項目 新增「決定看板 v1」',
+  '原因：test',
+  '▾ 設定精靈 v2 · 下一個',
+  '下一個',
+  '做完的樣子：第一次打開就能用',
+  '▾ 變動紀錄（4 筆）',
+  'MM/DD hh:mm ▾ 步驟：移動 2 個',
+  'MM/DD hh:mm 步驟 「輸入框上方一列文字」移到「決定看板 v1」',
+  'MM/DD hh:mm 步驟 「輸入框上方一列文字」移到「設定精靈 v2」',
+  'MM/DD hh:mm 項目 改名「設定精靈」→「設定精靈 v2」 · 你在對話裡說：「照你的建議」',
+  '原因：使用者在對話裡同意',
+  'MM/DD hh:mm 項目 新增「設定精靈」',
+  '原因：test',
+  '▾ 英文文件 · 之後',
+  '之後',
+  '做完的樣子：README 有英文版',
+  '▾ 變動紀錄（1 筆）',
+  'MM/DD hh:mm 項目 新增「英文文件」',
+  '原因：test',
+  '▾ 做完（1 項）',
+  '▾ 舊卡片搬過來 · 做完',
+  ' 做完 ',
+  '[████████]',
+  '1/1',
+  'auth-center 1/1',
+  '做完的樣子：舊的決定都在新看板',
+  '▾ 做完 1 步',
+  '✓',
+  'auth-center ·',
+  '搬舊資料',
+  'AI 回報：搬完了',
+  '▾ 變動紀錄（4 筆）',
+  'MM/DD hh:mm ▾ 步驟：新增 1 個、做完 1 個、改標 repo 1 個',
+  'MM/DD hh:mm 步驟 「搬舊資料」標成 auth-center',
+  '原因：test',
+  'MM/DD hh:mm 步驟 「搬舊資料」→ 做完',
+  '原因：舊資料都在',
+  'MM/DD hh:mm 步驟 新增「搬舊資料」到「舊卡片搬過來」',
+  '原因：test',
+  'MM/DD hh:mm 項目 新增「舊卡片搬過來」',
+  '原因：test',
+  '總表',
+  '等你（4）',
+  ' ⚑ 要你動手 ',
+  '✕',
+  '決定看板 v1 › ERC後端 · 窗格兩個畫面',
+  '在終端機跑 thoth checks approve',
+  '為什麼：新的檢查要人核准',
+  '指令：thoth checks approve',
+  '做好了',
+  'input:5a5a5a5a:note',
+  '⚑ 要你決定',
+  '✕',
+  '決定看板 v1 › ERC後端 · 窗格兩個畫面',
+  '輸入框上方要不要顯示做完的數量？',
+  '為什麼現在問：一列只放得下兩三件事',
+  '› 不顯示（建議）',
+  '一列保持短 · 做完的在總表看',
+  '› 顯示',
+  '一眼看到進度',
+  '▾ 之前的變動（3 筆）',
+  'MM/DD hh:mm 卡片 提出「調整項目？」',
+  '原因：test',
+  'MM/DD hh:mm 卡片 請你「在終端機跑 thoth checks approve」',
+  '原因：test',
+  'MM/DD hh:mm 步驟：新增 1 個、改名 1 個、移動 2 個、改派 2 個、改標 repo 1 個',
+  'input:e1e1e1e1:note',
+  '提案',
+  '✕',
+  '決定看板 v1',
+  '調整項目？',
+  '為什麼現在問：順序和名稱都要改',
+  '同意',
+  '項目 新增「手機版」',
+  '項目 修改「設定精靈 v2」：標題改成「設定精靈 v3」；做完的樣子改成「一分鐘設好」',
+  '項目 拆開「英文文件」→「英文 README」「英文教學」',
+  '項目 合併「決定看板 v1」「設定精靈 v2」→「看板和精靈」',
+  '項目 調整順序',
+  '項目 刪掉「英文文件」',
+  '不要',
+  '▾ 之前的變動（3 筆）',
+  'MM/DD hh:mm 卡片 提出「輸入框上方要不要顯示做完的數量？」',
+  '原因：test',
+  'MM/DD hh:mm 卡片 請你「在終端機跑 thoth checks approve」',
+  '原因：test',
+  'MM/DD hh:mm 步驟：新增 1 個、改名 1 個、移動 2 個、改派 2 個、改標 repo 1 個',
+  'input:f1f1f1f1:note',
+  '⚑ 要你決定',
+  '✕',
+  '其他',
+  '要不要加英文文件？',
+  '為什麼現在問：使用者之前提過',
+  '› 加',
+  '多一份文件',
+  '› 不加',
+  '先不做',
+  'input:e2e2e2e2:note',
+]
+
+test('old_logs_draw_the_rows_of_0_6_0', ZH, async ($, on) => {
+  // Both surfaces draw the same rows.
+  expect(await everythingRows($, on)).toEqual([...ROWS_0_6_0, ...ROWS_0_6_0])
+})
+
+test('old_logs_lose_no_row_of_0_4_2', ZH, async ($, on) => {
+  const rows = (await everythingRows($, on)).map(wordsOf)
+  // A card's question now sits under its header and breadcrumb (design 8.4): in 0.4.2 it came before its ✕ and breadcrumb.
+  const old = [...OLD_ROWS]
+  for (let i = 0; i + 2 < old.length; i++) {
+    if (old[i + 1] === '✕') old.splice(i, 3, old[i + 1], old[i + 2], old[i])
+  }
+  // Every row 0.4.2 drew is still drawn, in the same order: as a row of its own or inside a row that says more.
+  let at = 0
+  for (const row of old.map(wordsOf)) {
+    const found = rows.findIndex((line, n) => n >= at && line.includes(row))
+    expect({ row, found: found !== -1 }).toEqual({ row, found: true })
+    at = found
+  }
 })
 
 const add = async ($: Engine, question: string, extra: Record<string, unknown> = {}) => {
@@ -941,9 +1273,9 @@ test('a_thought_only_card_dims_and_waits_for_the_ai', ZH, async ($, on) => {
     expect(await ui.find({ key: `${id}:0` })).toBeUndefined()
     expect(await ui.find({ key: `${id}:note` })).toBeUndefined()
     expect(await ui.find({ key: `${id}:x` })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+    expect(await labelOf(ui, 'view:cards')).toBe('等你（0）')
     const line = await band($, surface)
-    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：0 項進行中 · 0 件事等你')
+    expect(await bandLine(line)).toEqual([word('計畫'), word(' 0 項進行中 ', { inverse: true, color: 'suggestion' }), word('0 件事等你', { dimColor: true })])
     await line.unmount()
 
     await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '先看 CI' })
@@ -970,12 +1302,12 @@ test('a_blocking_thought_dims_the_card_at_once_and_the_step_keeps_its_flag', ZH,
     expect(await ui.find({ key: `${blocking}:0` })).toBeUndefined()
     expect(await ui.find({ key: `${blocking}:note` })).toBeUndefined()
     expect(await ui.find({ key: 'send' })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+    expect(await labelOf(ui, 'view:cards')).toBe('等你（0）')
 
     // The step waits on the card until the AI settles it.
     await ui.press({ key: 'view:overview' })
     await ui.press({ key: `item:${B}` })
-    expect(await ui.find({ type: 'Button', text: '▾ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
+    expect(await labelOf(ui, `item:${B}`)).toBe('▾ 決定看板 v1 · 進行中 ⚑')
     expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
     await $.tool.call({ tool: tool('resolve_decision'), card: blocking, outcome: '先用 8080，另開卡問 CI' })
     expect(await ui.find({ text: '● 窗格兩個畫面' })).toBeDefined()
@@ -1000,7 +1332,7 @@ test('a_choice_sent_with_a_thought_dims_as_before', ZH, async ($, on) => {
     expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
     // The choice answers the card; the thought is not shown under it.
     expect(await ui.find({ type: 'Text', text: '你的想法：記憶體要夠' })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（0）' })).toBeDefined()
+    expect(await labelOf(ui, 'view:cards')).toBe('等你（0）')
     await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: 'LRU' })
     await ui.unmount()
     w.submitted.length = 0
@@ -1309,7 +1641,7 @@ test('action_card_shows_the_command_and_done_goes_out_at_once', ZH, async ($, on
     await fresh($, w)
     const id = await addAction($, { item: B, step: S2 })
     const ui = await pane($, surface)
-    expect(await ui.find({ type: 'Button', key: 'view:cards', text: '等你（2）' })).toBeDefined()
+    expect(await labelOf(ui, 'view:cards')).toBe('等你（2）')
     await ui.press({ key: `item:${B}` })
     expect(await ui.find({ text: `等你處理：${ACTION}` })).toBeDefined()
     expect(await ui.find({ text: '⚑ 窗格兩個畫面' })).toBeDefined()
@@ -1336,7 +1668,7 @@ test('action_card_shows_the_command_and_done_goes_out_at_once', ZH, async ($, on
     await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
 
     const line = await band($, surface)
-    expect((await line.find({ type: 'Text', text: /計畫：/ }))?.text).toBe('計畫：1 項進行中 · 1 件事等你')
+    expect(await bandLine(line)).toEqual([word('計畫'), DOING_1, word(' 1 件事等你 ', { inverse: true, color: 'warning' })])
     await line.unmount()
     await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '檢查已核准' })
     await ui.unmount()
@@ -1414,10 +1746,16 @@ test('repos_show_by_short_name_on_items_steps_and_cards', ZH, async ($, on) => {
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await pane($, surface)
-    // Each repo's done/total after the state, in the order the item's steps first name it; an item with no tagged step shows none.
-    expect(await ui.find({ type: 'Button', text: '▸ 決定看板 v1 · 進行中 ⚑' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '· auth-center 1/2 · ERC後端 0/1' })).toBeDefined()
-    expect((await texts(ui)).filter(text => text.startsWith('· '))).toHaveLength(1)
+    // Each repo's done/total on a dim line under the folded item, in the order the item's steps first name it; an item with no tagged step shows none.
+    expect(await labelOf(ui, `item:${B}`)).toBe('▸ 決定看板 v1 · 進行中 ⚑')
+    const progress =await ui.find({ type: 'Text', text: 'auth-center 1/2 · ERC後端 0/1' })
+    expect(progress?.text).toBe('auth-center 1/2 · ERC後端 0/1')
+    expect(progress?.props).toEqual({ dimColor: true, wrap: 'wrap' })
+    expect((await parentOf(ui, 'auth-center 1/2 · ERC後端 0/1'))?.box.props).toEqual({ paddingLeft: 2 })
+    expect((await texts(ui)).filter(text => text.includes('auth-center') || text.includes('ERC'))).toEqual(['auth-center 1/2 · ERC後端 0/1'])
+    const closedRows = await order(ui)
+    const itemAt = closedRows.indexOf('▸ 決定看板 v1 · 進行中 ⚑')
+    expect(closedRows.slice(itemAt, itemAt + 5)).toEqual(['▸ 決定看板 v1 · 進行中 ⚑', ' 進行中 ', '[███     ]', '1/3', 'auth-center 1/2 · ERC後端 0/1'])
 
     // A tagged step: its mark, the repo dimmed, then its title.
     await ui.press({ key: `item:${B}` })
@@ -1432,8 +1770,8 @@ test('repos_show_by_short_name_on_items_steps_and_cards', ZH, async ($, on) => {
     await ui.press({ key: `log:${B}` })
     expect((await ui.find({ type: 'Button', key: fold }))?.text).toMatch(/▸ 步驟：新增 3 個、做完 1 個、開始 1 個、改標 repo 2 個$/)
     await ui.press({ key: fold })
-    expect(await ui.find({ type: 'Button', text: /步驟 「窗格兩個畫面」標成 ERC後端$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Button', text: /步驟 新增「改 token 驗證」到「決定看板 v1」（auth-center）$/ })).toBeDefined()
+    expect(await labelled(ui, /步驟 「窗格兩個畫面」標成 ERC後端$/)).toHaveLength(1)
+    expect(await labelled(ui, /步驟 新增「改 token 驗證」到「決定看板 v1」（auth-center）$/)).toHaveLength(1)
 
     await ui.press({ key: 'view:cards' })
     expect(await ui.find({ type: 'Text', text: '決定看板 v1 › ERC後端 · 窗格兩個畫面' })).toBeDefined()
@@ -1456,15 +1794,15 @@ test('a_new_or_dropped_short_name_shows_everywhere_at_once', ZH, async ($, on) =
     expect(await ui.find({ type: 'Text', text: 'ERC後端 ·' })).toBeDefined()
 
     await rename('ERC主程式')
-    expect(await ui.find({ type: 'Text', text: '· auth-center 1/2 · ERC主程式 0/1' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: 'auth-center 1/2 · ERC主程式 0/1' }))?.text).toBe('auth-center 1/2 · ERC主程式 0/1')
     expect(await ui.find({ type: 'Text', text: 'ERC主程式 ·' })).toBeDefined()
-    expect(await ui.find({ type: 'Button', text: /步驟 「窗格兩個畫面」標成 ERC主程式$/ })).toBeDefined()
+    expect(await labelled(ui, /步驟 「窗格兩個畫面」標成 ERC主程式$/)).toHaveLength(1)
     expect((await texts(ui)).some(text => text.includes('ERC後端'))).toBe(false)
 
     await rename('')
-    expect(await ui.find({ type: 'Text', text: `· auth-center 1/2 · ${ERC} 0/1` })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: `auth-center 1/2 · ${ERC} 0/1` }))?.text).toBe(`auth-center 1/2 · ${ERC} 0/1`)
     expect(await ui.find({ type: 'Text', text: `${ERC} ·` })).toBeDefined()
-    expect(await ui.find({ type: 'Button', text: new RegExp(`步驟 「窗格兩個畫面」標成 ${ERC}$`) })).toBeDefined()
+    expect(await labelled(ui, new RegExp(`步驟 「窗格兩個畫面」標成 ${ERC}$`))).toHaveLength(1)
     expect((await texts(ui)).some(text => text.includes('ERC主程式'))).toBe(false)
     await ui.unmount()
   }
@@ -1599,25 +1937,48 @@ test('a_long_thought_shows_in_full_below_the_field_while_typing', ZH, async ($, 
   }
 })
 
-type Drawn = { type: string; props?: Record<string, unknown>; children?: (Drawn | string)[] }
 /** The Box props that add blank rows above or below what a Box holds. */
 const VERTICAL = ['marginTop', 'marginBottom', 'paddingTop', 'paddingBottom'] as const
-const nodes = (node: Drawn | string, out: Drawn[] = []): Drawn[] => {
-  if (typeof node === 'string') return out
-  out.push(node)
-  for (const child of node.children ?? []) nodes(child, out)
-  return out
-}
 const shown = (node: Drawn | string): string => (typeof node === 'string' ? node : node.type === 'Button' ? String(node.props?.label) : (node.children ?? []).map(shown).join(''))
-/** What the pane shows top to bottom: a Button or Text as its words, an Input as its key. */
-async function order(ui: Ui): Promise<string[]> {
-  const out: string[] = []
-  for (const node of nodes((await ui.drawn()) as Drawn)) {
-    if (node.type === 'Button' || node.type === 'Text') out.push(shown(node))
-    else if (node.type === 'Input') out.push(`input:${String(node.props?.key)}`)
+/** The rows of a tree top to bottom: each Button, Text and Input, without what is drawn inside one (a Button's look, a Text's coloured parts). */
+const rowNodes = (node: Drawn | string, out: Drawn[] = []): Drawn[] => {
+  if (typeof node === 'string') return out
+  if (node.type === 'Button' || node.type === 'Text' || node.type === 'Input') {
+    out.push(node)
+    return out
   }
+  for (const child of node.children ?? []) rowNodes(child, out)
   return out
 }
+const rowText = (node: Drawn): string => (node.type === 'Input' ? `input:${String(node.props?.key)}` : shown(node))
+/** What the pane shows top to bottom: a Button as its label, a Text as its words, an Input as its key. */
+async function order(ui: Ui): Promise<string[]> {
+  return rowNodes((await ui.drawn()) as Drawn).map(rowText)
+}
+/** Each node of the tree mapped to the node it sits in. */
+const parentsOf = (tree: Drawn): Map<Drawn, Drawn> => {
+  const parents = new Map<Drawn, Drawn>()
+  for (const node of nodes(tree)) for (const child of node.children ?? []) if (typeof child !== 'string') parents.set(child, node)
+  return parents
+}
+/** For the detail line `words`: the cell its text starts at, counted from the Box its block sits in, and the bar on its left (a 1-cell Box). */
+async function detailPlace(ui: Ui, words: string): Promise<{ start: number; bar: { width: unknown; backgroundColor: unknown; children: number } } | undefined> {
+  const tree = (await ui.drawn()) as Drawn
+  const parents = parentsOf(tree)
+  const text = nodes(tree).find(node => node.type === 'Text' && shown(node) === words)
+  const column = text === undefined ? undefined : parents.get(text)
+  const row = column === undefined ? undefined : parents.get(column)
+  if (column === undefined || row === undefined) return undefined
+  const left = row.children?.[(row.children ?? []).indexOf(column) - 1]
+  if (left === undefined || typeof left === 'string') return undefined
+  const cells = (n: unknown): number => (typeof n === 'number' ? n : 0)
+  return {
+    start: cells(row.props?.paddingLeft) + cells(left.props?.width) + cells(column.props?.paddingLeft),
+    bar: { width: left.props?.width, backgroundColor: left.props?.backgroundColor, children: (left.children ?? []).length },
+  }
+}
+/** The bar a detail draws beside its text. */
+const DETAIL_BAR = { width: 1, backgroundColor: 'inactive', children: 0 }
 /** The Box a Text sits directly in, and the Text's place in it. */
 async function parentOf(ui: Ui, words: string): Promise<{ box: Drawn; at: number } | undefined> {
   for (const node of nodes((await ui.drawn()) as Drawn)) {
@@ -1672,37 +2033,45 @@ test('a_sent_card_keeps_the_breadcrumb', ZH, async ($, on) => {
   }
 })
 
-test('why_has_its_label_on_one_line_and_its_text_indented_below', ZH, async ($, on) => {
+test('why_and_its_reason_are_one_wrapping_text_with_a_dim_label', ZH, async ($, on) => {
   const w = await start($, on, [...board(), blockedOnS2()])
   for (const surface of SURFACES) {
     await fresh($, w)
     const ui = await pane($, surface)
     await ui.press({ key: 'view:cards' })
-    const label = await parentOf(ui, '為什麼現在問：')
-    expect(label).toBeDefined()
-    expect(label?.box.props?.marginTop).toBe(1)
-    const body = label?.box.children?.[(label?.at ?? 0) + 1] as Drawn
-    expect(body.type).toBe('Box')
-    expect(body.props?.paddingLeft).toBe(2)
-    expect(shown(body)).toBe('一列只放得下兩三件事')
+    const why = await ui.find({ type: 'Text', text: '為什麼現在問：一列只放得下兩三件事' })
+    expect(bare(why as unknown as Drawn)).toEqual(word([word('為什麼現在問：', { dimColor: true }), '一列只放得下兩三件事'], { wrap: 'wrap' }))
+    // It sits straight in the card, under the question.
+    const rows = await cardRows(ui, Q1)
+    expect(rows[rows.indexOf('為什麼現在問：一列只放得下兩三件事') - 1]).toBe('輸入框上方要不要顯示做完的數量？')
+    expect((await parentOf(ui, '為什麼現在問：一列只放得下兩三件事'))?.box.props?.key).toBe(`card:body:${Q1}`)
     await ui.unmount()
   }
 })
 
-test('action_why_has_its_label_on_one_line_and_its_text_indented_below', ZH, async ($, on) => {
+test('action_why_and_its_reason_are_one_wrapping_text_with_a_dim_label', ZH, async ($, on) => {
   const w = await start($, on, [...board()])
   for (const surface of SURFACES) {
     await fresh($, w)
-    await addAction($, { item: B, step: S2 })
+    const id = await addAction($, { item: B, step: S2 })
     const ui = await pane($, surface)
     await ui.press({ key: 'view:cards' })
-    const label = await parentOf(ui, '為什麼：')
-    expect(label?.box.props?.marginTop).toBe(1)
-    const body = label?.box.children?.[(label?.at ?? 0) + 1] as Drawn
-    expect(body.props?.paddingLeft).toBe(2)
-    expect(shown(body)).toBe('新的檢查要人核准才會跑')
+    const why = await ui.find({ type: 'Text', text: '為什麼：新的檢查要人核准才會跑' })
+    expect(bare(why as unknown as Drawn)).toEqual(word([word('為什麼：', { dimColor: true }), '新的檢查要人核准才會跑'], { wrap: 'wrap' }))
+    expect((await parentOf(ui, '為什麼：新的檢查要人核准才會跑'))?.box.props?.key).toBe(`card:body:${id}`)
     await ui.unmount()
+    await $.tool.call({ tool: tool('resolve_decision'), card: id, outcome: '另一面再開一張' })
   }
+})
+
+test('why_in_english_has_a_space_after_its_label', async ($, on) => {
+  const w = await start($, on, [...board(), blockedOnS2()])
+  const ui = await pane($, 'terminal')
+  await ui.press({ key: 'view:cards' })
+  const why = await ui.find({ type: 'Text', text: 'Why ask now: 一列只放得下兩三件事' })
+  expect(bare(why as unknown as Drawn)).toEqual(word([word('Why ask now:', { dimColor: true }), ' 一列只放得下兩三件事'], { wrap: 'wrap' }))
+  await ui.unmount()
+  expect(w.submitted).toEqual([])
 })
 
 test('options_follow_the_why_and_the_earlier_changes_sit_below_the_picks', ZH, async ($, on) => {
@@ -1714,8 +2083,8 @@ test('options_follow_the_why_and_the_earlier_changes_sit_below_the_picks', ZH, a
     await ui.press({ key: `${Q1}:0` })
     const seen = await order(ui)
     const at = (text: string | RegExp) => seen.findIndex(line => (typeof text === 'string' ? line === text : text.test(line)))
-    expect(at('一列只放得下兩三件事')).toBeGreaterThan(at('為什麼現在問：'))
-    expect(at(/^● 不顯示/)).toBe(at('一列只放得下兩三件事') + 1)
+    expect(at('為什麼現在問：一列只放得下兩三件事')).toBeGreaterThan(at('輸入框上方要不要顯示做完的數量？'))
+    expect(at(/^● 不顯示/)).toBe(at('為什麼現在問：一列只放得下兩三件事') + 1)
     expect(at(/^已選：/)).toBeGreaterThan(at(/^顯示/))
     expect(at('清除')).toBeGreaterThan(at(/^已選：/))
     expect(at(/^▸ 之前的變動（\d+ 筆）$/)).toBeGreaterThan(at('清除'))
@@ -1768,12 +2137,23 @@ test('done_items_gather_in_one_closed_line_at_the_bottom', ZH, async ($, on) => 
     const ui = await pane($, surface)
     const closed = await order(ui)
     expect(closed.filter(line => line.includes('審查流程'))).toEqual([])
-    expect(closed.slice(-4)).toEqual(['▸ 決定看板 v1 · 進行中 ⚑', '▸ 設定精靈 · 下一個', '▸ 英文文件 · 之後', '▸ 做完（1 項）'])
+    // Each item row is its button and its right side: the state, and the bar and count when it has steps.
+    expect(closed.slice(-9)).toEqual([
+      '▸ 決定看板 v1 · 進行中 ⚑',
+      ' 進行中 ',
+      '[████    ]',
+      '1/2',
+      '▸ 設定精靈 · 下一個',
+      '下一個',
+      '▸ 英文文件 · 之後',
+      '之後',
+      '▸ 做完（1 項）',
+    ])
 
     await ui.press({ key: 'group:done' })
     expect(localOf(w).expanded).toEqual(['group:done'])
     const opened = await order(ui)
-    expect(opened.slice(-2)).toEqual(['▾ 做完（1 項）', '▸ 審查流程 · 做完'])
+    expect(opened.slice(-5)).toEqual(['▾ 做完（1 項）', '▸ 審查流程 · 做完', ' 做完 ', '[████████]', '1/1'])
 
     // A done item opens like any other; all its steps are done, so they sit behind one line.
     await ui.press({ key: `item:${A}` })
@@ -1881,7 +2261,9 @@ test('a_step_detail_opens_under_its_title', ZH, async ($, on) => {
     const rows = await order(ui)
     const at = rows.indexOf('○ 英文說明 ▾')
     expect(rows.slice(at, at + 3)).toEqual(['○ 英文說明 ▾', '寫給第一次用的人：', '裝好後五分鐘內看得懂總表'])
-    expect((await parentOf(ui, '寫給第一次用的人：'))?.box.props?.paddingLeft).toBe(2)
+    // The text starts where 0.5.0 put it; the inactive bar takes the two cells on its left.
+    expect(await detailPlace(ui, '寫給第一次用的人：')).toEqual({ start: 2, bar: DETAIL_BAR })
+    expect(await detailPlace(ui, '裝好後五分鐘內看得懂總表')).toEqual({ start: 2, bar: DETAIL_BAR })
 
     await ui.press({ key: `detail:${id}` })
     expect((await ui.find({ key: `detail:${id}` }))?.text).toMatch(/▸$/)
@@ -2045,9 +2427,7 @@ test('opening_details_never_touches_the_local_log', ZH, async ($, on) => {
 async function cardRows(ui: Ui, card: string): Promise<string[]> {
   const box = nodes((await ui.drawn()) as Drawn).find(node => node.props?.key === `card:box:${card}`)
   expect(box).toBeDefined()
-  return nodes(box as Drawn)
-    .filter(node => node.type === 'Button' || node.type === 'Text' || node.type === 'Input')
-    .map(node => (node.type === 'Input' ? `input:${String(node.props?.key)}` : shown(node)))
+  return rowNodes(box as Drawn).map(rowText)
 }
 
 /** The Box a Button keyed `key` sits directly in, and the Button's place in it. */
@@ -2097,8 +2477,8 @@ test('option_details_open_together_under_each_option', ZH, async ($, on) => {
     expect(rows.indexOf('但要開窗格才知道做完幾項')).toBe(rows.indexOf('那列一眼看完，') + 1)
     expect(rows.indexOf('那列多幾個字，窄的終端機會被截')).toBe(rows.indexOf('一眼看到進度') + 1)
     expect(rows.indexOf('一眼看到進度')).toBe(rows.indexOf('但要開窗格才知道做完幾項') + 2)
-    expect((await parentOf(ui, '那列一眼看完，'))?.box.props?.paddingLeft).toBe(4)
-    expect((await parentOf(ui, '那列多幾個字，窄的終端機會被截'))?.box.props?.paddingLeft).toBe(4)
+    expect(await detailPlace(ui, '那列一眼看完，')).toEqual({ start: 4, bar: DETAIL_BAR })
+    expect(await detailPlace(ui, '那列多幾個字，窄的終端機會被截')).toEqual({ start: 4, bar: DETAIL_BAR })
 
     // Once the pick is sent the card dims: no toggle and no detail, though the toggle was left open.
     await ui.press({ key: `${card}:0` })
@@ -2124,7 +2504,7 @@ test('an_action_card_detail_opens_between_why_and_command', ZH, async ($, on) =>
     await ui.press({ key: 'view:cards' })
     const closed = await order(ui)
     const at = (rows: string[], text: string) => rows.indexOf(text)
-    expect(at(closed, '▸ 細節')).toBe(at(closed, '新的檢查要人核准才會跑') + 1)
+    expect(at(closed, '▸ 細節')).toBe(at(closed, '為什麼：新的檢查要人核准才會跑') + 1)
     expect(at(closed, '指令：thoth checks approve')).toBe(at(closed, '▸ 細節') + 1)
     expect((await ui.find({ key: `detail:${card}` }))?.text).toBe('▸ 細節')
     expect(await ui.find({ type: 'Text', text: '沒人核准就不會跑；' })).toBeUndefined()
@@ -2132,9 +2512,9 @@ test('an_action_card_detail_opens_between_why_and_command', ZH, async ($, on) =>
     await ui.press({ key: `detail:${card}` })
     const opened = await order(ui)
     const toggle = at(opened, '▾ 細節')
-    expect(toggle).toBe(at(opened, '新的檢查要人核准才會跑') + 1)
+    expect(toggle).toBe(at(opened, '為什麼：新的檢查要人核准才會跑') + 1)
     expect(opened.slice(toggle + 1, toggle + 4)).toEqual(['沒人核准就不會跑；', '核准後下一輪自動跑', '指令：thoth checks approve'])
-    expect((await parentOf(ui, '沒人核准就不會跑；'))?.box.props?.paddingLeft).toBe(2)
+    expect(await detailPlace(ui, '沒人核准就不會跑；')).toEqual({ start: 2, bar: DETAIL_BAR })
 
     await ui.press({ key: `detail:${card}` })
     expect(await ui.find({ type: 'Text', text: '沒人核准就不會跑；' })).toBeUndefined()
@@ -2180,7 +2560,7 @@ test('a_proposal_detail_opens_under_approve', ZH, async ($, on) => {
     const opened = await order(ui)
     const at = opened.indexOf('▾ 細節')
     expect(opened.slice(at + 1, at + 3)).toEqual(['同意之後多一個項目「文件」', '不要'])
-    expect((await parentOf(ui, '同意之後多一個項目「文件」'))?.box.props?.paddingLeft).toBe(4)
+    expect(await detailPlace(ui, '同意之後多一個項目「文件」')).toEqual({ start: 4, bar: DETAIL_BAR })
 
     // A proposal without a detail has no toggle, folded or open.
     expect(await ui.find({ key: `detail:${other}` })).toBeUndefined()
@@ -2247,7 +2627,7 @@ test('a_change_with_a_detail_shows_it_under_the_reason', ZH, async ($, on) => {
     // The detail sits four cells in from the history line, two from its reason.
     const line = await ui.find({ type: 'Button', text: /卡片 結案「要不要先做英文說明？」/ })
     await ui.press({ key: line?.key as string })
-    expect((await parentOf(ui, '等第一版穩定之後再寫'))?.box.props?.paddingLeft).toBe(4)
+    expect(await detailPlace(ui, '等第一版穩定之後再寫')).toEqual({ start: 4, bar: DETAIL_BAR })
     expect((await ui.find({ type: 'Text', text: '等第一版穩定之後再寫' }))?.props.dimColor).toBe(true)
     await ui.press({ key: line?.key as string })
 
@@ -2310,10 +2690,10 @@ test('closed_details_add_at_most_one_row_per_card', ZH, async ($, on) => {
       expect(more.length - less.length).toBe(1)
       expect(more.filter(row => row === '▸ 選項細節' || row === '▸ 細節')).toHaveLength(1)
     }
-    // An action card's toggle sits straight in the card's Box; a proposal's sits in a Box that holds only the toggle and adds no vertical space.
-    expect((await boxOfButton(ui, `detail:${AD}`))?.box.props?.key).toBe(`card:box:${AD}`)
-    // The action card's own Box has the same vertical spacing with a detail as without.
-    const boxOf = async (card: string) => nodes((await ui.drawn()) as Drawn).find(node => node.props?.key === `card:box:${card}`)
+    // An action card's toggle sits straight in the card's body; a proposal's sits in a Box that holds only the toggle and adds no vertical space.
+    expect((await boxOfButton(ui, `detail:${AD}`))?.box.props?.key).toBe(`card:body:${AD}`)
+    // The action card's body has the same vertical spacing with a detail as without.
+    const boxOf = async (card: string) => nodes((await ui.drawn()) as Drawn).find(node => node.props?.key === `card:body:${card}`)
     const [withBox, withoutBox] = [await boxOf(AD), await boxOf(AN)]
     expect(withBox).toBeDefined()
     expect(withoutBox).toBeDefined()
@@ -2385,5 +2765,405 @@ test('each_card_opens_only_its_own_details', ZH, async ($, on) => {
     expect((await ui.find({ key: `detail:${S2}` }))?.text).toMatch(/▸$/)
     expect(await ui.find({ type: 'Text', text: '上方兩個按鈕切換總表和等你' })).toBeUndefined()
     await ui.unmount()
+  }
+})
+
+/** The theme keys of the design's section 4, the only colours the pane may name. */
+const THEME_KEYS = ['suggestion', 'warning', 'success', 'inactive', 'subtle']
+
+/** Every board the overview and the cards can show, opened all the way: each item, fold, history row, card and detail, one card staged and one sent. */
+async function everythingOpen($: Engine, w: World, surface: Surface): Promise<Ui> {
+  await fresh($, w)
+  const ui = await pane($, surface)
+  await ui.press({ key: 'group:done' })
+  for (const id of [A, B, C, D]) await ui.press({ key: `item:${id}` })
+  await openFolds(ui)
+  await pressDetails(ui)
+  await pressHistoryRows(ui)
+  return ui
+}
+
+test('colours_are_theme_keys_only', ZH, async ($, on) => {
+  const w = await start($, on, [...everything(), ...detailed()])
+  for (const surface of SURFACES) {
+    const ui = await everythingOpen($, w, surface)
+    const trees = [(await ui.drawn()) as Drawn]
+    await ui.press({ key: 'view:cards' })
+    for (const id of [Q1, Q2, P1, D_QUESTION, D_ACTION, D_PROPOSAL]) await ui.press({ key: `card:${id}` })
+    await pressDetails(ui)
+    await ui.press({ key: `${Q2}:0` })
+    await ui.press({ key: 'send' })
+    await until(ui, () => w.submitted.length > 0)
+    await ui.press({ key: `${P1}:approve` })
+    trees.push((await ui.drawn()) as Drawn)
+    const line = await band($, surface)
+    trees.push((await line.drawn()) as Drawn)
+    await line.unmount()
+    // The pills are there, in each of their tones.
+    const pills = trees.flatMap(tree => nodes(tree)).filter(node => node.props?.inverse === true)
+    expect([...new Set(pills.map(node => node.props?.color))].sort()).toEqual(['success', 'suggestion', 'warning'])
+    for (const node of trees.flatMap(tree => nodes(tree))) {
+      for (const prop of ['color', 'backgroundColor', 'borderColor']) {
+        if (node.props?.[prop] !== undefined) expect(THEME_KEYS).toContain(node.props[prop])
+      }
+      // A fill only on the 1-cell bars, which hold nothing.
+      if (node.props?.backgroundColor !== undefined) {
+        expect({ type: node.type, width: node.props.width, children: node.children ?? [] }).toEqual({ type: 'Box', width: 1, children: [] })
+      }
+      // A pill is inverse words in a theme key, never bold.
+      if (node.props?.inverse === true) {
+        expect(node.type).toBe('Text')
+        expect(node.props.bold).toBeUndefined()
+      }
+      // None of what the engine refuses: one-sided borders, a border style object, a Box or a fill in a Button.
+      for (const side of ['borderLeft', 'borderRight', 'borderTop', 'borderBottom']) expect(node.props?.[side]).toBeUndefined()
+      expect(typeof node.props?.borderStyle === 'object').toBe(false)
+      if (node.type === 'Button') {
+        expect(node.props?.backgroundColor).toBeUndefined()
+        expect(nodes(node).filter(inside => inside.type === 'Box')).toEqual([])
+      }
+    }
+    await ui.unmount()
+    // fresh() forgets the pick and the send, so the next surface starts from the same board.
+    w.submitted.length = 0
+  }
+})
+
+/** The cells a row of parts takes: their words and the Box's gaps. */
+const rowWidth = (box: Drawn): number => {
+  const parts = (box.children ?? []).filter(child => typeof child !== 'string') as Drawn[]
+  return parts.reduce((n, part) => n + textWidth(shown(part)), 0) + Number(box.props?.gap ?? 0) * (parts.length - 1)
+}
+
+/** A done item A, B in progress (1 of 2 done), C next with one step to do, D later without steps. */
+const states = () => [
+  ...board(),
+  entry('item.add', { item: item(A, '舊卡片搬過來', '舊的決定都在新看板') }),
+  entry('step.add', { item: A, step: { id: S0, title: '搬舊資料' } }),
+  entry('step.status', { step: S0, status: 'done', result: '搬完了' }),
+  entry('step.add', { item: C, step: { id: S3, title: '第一次打開' } }),
+]
+
+test('an_item_row_shows_its_state_a_bar_and_the_count', ZH, async ($, on) => {
+  const w = await start($, on, states())
+  const ink = (n: number, tone: string, cells: number) =>
+    word([word('[', { dimColor: true }), ...(n > 0 ? [word('█'.repeat(n), { color: tone })] : []), ...(n < cells ? [' '.repeat(cells - n)] : []), word(']', { dimColor: true })])
+  const right = async (ui: Ui, id: string) => bare(await boxKeyed(ui, `state:${id}`))
+  const row = (id: string, ...parts: Drawn[]) => ({ type: 'Box', props: { key: `state:${id}`, flexShrink: 0, gap: 1 }, children: parts })
+  const doing = word(' 進行中 ', { inverse: true, color: 'suggestion' })
+  for (const surface of SURFACES) {
+    // 49 cells, docked: a bar of 4; the right side of an item in progress takes 19 cells.
+    await fresh($, w)
+    let ui = await pane($, surface, 49)
+    await ui.press({ key: 'group:done' })
+    expect(await right(ui, B)).toEqual(row(B, doing, ink(2, 'suggestion', 4), word('1/2')))
+    expect(await right(ui, C)).toEqual(row(C, word('下一個'), ink(0, 'suggestion', 4), word('0/1')))
+    expect(await right(ui, D)).toEqual(row(D, word('之後', { dimColor: true })))
+    expect(await right(ui, A)).toEqual(row(A, word(' 做完 ', { inverse: true, color: 'success' }), ink(4, 'success', 4), word('1/1')))
+    expect(rowWidth((await boxKeyed(ui, `state:${B}`)) as Drawn)).toBe(19)
+    // The title is the toggle, bold after its arrow; the button keeps its key and label.
+    const title = await boxOfButton(ui, `item:${B}`)
+    expect(bare(title?.box.children?.[title.at] as Drawn)).toEqual({
+      type: 'Button',
+      props: { key: `item:${B}`, label: '▸ 決定看板 v1 · 進行中', plain: true },
+      children: ['▸ ', word('決定看板 v1', BOLD[surface])],
+    })
+    // A title shrinks and wraps; the right side keeps its width.
+    expect(title?.box.props).toEqual({ flexShrink: 1 })
+    expect((await boxKeyed(ui, `box:item:${B}`))?.props?.marginBottom).toBeUndefined()
+    await ui.press({ key: `item:${B}` })
+    // An open item has a blank row under it; the closed ones sit one under another.
+    expect((await boxKeyed(ui, `box:item:${B}`))?.props?.marginBottom).toBe(1)
+    expect((await boxKeyed(ui, `box:item:${C}`))?.props?.marginBottom).toBeUndefined()
+    await ui.unmount()
+
+    // Wide: a bar of 8. Narrow: the number alone.
+    ui = await pane($, surface, 100)
+    expect(await right(ui, B)).toEqual(row(B, doing, ink(4, 'suggestion', 8), word('1/2')))
+    expect(await right(ui, C)).toEqual(row(C, word('下一個'), ink(0, 'suggestion', 8), word('0/1')))
+    await ui.unmount()
+    ui = await pane($, surface, 39)
+    expect(await right(ui, B)).toEqual(row(B, doing, word('1/2')))
+    expect(await right(ui, C)).toEqual(row(C, word('下一個'), word('0/1')))
+    await ui.unmount()
+  }
+})
+
+test('an_item_row_in_english_keeps_its_right_side_within_24_cells', async ($, on) => {
+  const w = await start($, on, states())
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface, 49)
+    const right = (await boxKeyed(ui, `state:${B}`)) as Drawn
+    expect((right.children ?? []).map(child => shown(child))).toEqual([' in progress ', '[██  ]', '1/2'])
+    expect(rowWidth(right)).toBe(24)
+    expect(shown((await boxKeyed(ui, `state:${C}`)) as Drawn)).toBe('next[    ]0/1')
+    expect(shown((await boxKeyed(ui, `state:${D}`)) as Drawn)).toBe('later')
+    await ui.unmount()
+  }
+})
+
+test('a_step_row_colours_its_mark_and_puts_notes_and_waits_on_lines_below', ZH, async ($, on) => {
+  const w = await start($, on, [
+    ...board(),
+    blockedOnS2(),
+    entry('step.assign', { step: S2, to: 'claude-b' }),
+    entry('step.note', { step: S2, note: '等 Thoth 審查' }),
+    entry('step.add', { item: B, step: { id: S3, title: '輸入框上方一列' } }),
+  ])
+  let blocker = Q1
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `steps:${B}` })
+    const first = async (step: string) => bare(((await boxKeyed(ui, `step:${step}`))?.children ?? [])[0] as Drawn)
+    // The first line: the mark in its colour, then the title, bold while in progress and dim otherwise; who it is given to on the right, dim.
+    expect(await first(S2)).toEqual({ type: 'Box', props: { flexShrink: 1 }, children: [word([word('⚑', { color: 'warning' }), ' ', word('窗格兩個畫面', BOLD[surface])], { wrap: 'wrap' })] })
+    expect(await first(S3)).toEqual({ type: 'Box', props: { flexShrink: 1 }, children: [word([word('○', { dimColor: true }), ' ', word('輸入框上方一列', { dimColor: true })], { wrap: 'wrap' })] })
+    expect(await first(S1)).toEqual({ type: 'Box', props: { flexShrink: 1 }, children: [word([word('✓', { color: 'success' }), ' ', word('定檔案格式', { dimColor: true })], { wrap: 'wrap' })] })
+    expect(bare(await boxKeyed(ui, `step:${S2}`))).toMatchObject({ props: { key: `step:${S2}`, flexDirection: 'row', justifyContent: 'space-between', gap: 2 } })
+    expect(bare(((await boxKeyed(ui, `step:${S2}`))?.children ?? [])[1] as Drawn)).toEqual({ type: 'Box', props: { flexShrink: 0 }, children: [word('派給 claude-b', { dimColor: true })] })
+    // From the second line, four cells in: the note dim, what waits for the user in amber, the AI's or Thoth's report dim.
+    const below = async (step: string) => bare(((await boxKeyed(ui, `box:step:${step}`))?.children ?? [])[1] as Drawn)
+    expect(await below(S2)).toEqual({
+      type: 'Box',
+      props: { flexDirection: 'column', paddingLeft: 4 },
+      children: [word('等 Thoth 審查', { dimColor: true, wrap: 'wrap' }), word('等你決定：輸入框上方要不要顯示做完的數量？', { color: 'warning', wrap: 'wrap' })],
+    })
+    expect(await below(S1)).toEqual({ type: 'Box', props: { flexDirection: 'column', paddingLeft: 4 }, children: [word('Thoth pass', { dimColor: true, wrap: 'wrap' })] })
+    // A step with nothing more draws one line.
+    expect((await boxKeyed(ui, `box:step:${S3}`))?.children).toHaveLength(1)
+    // An in-progress step that waits on nothing has a blue ●.
+    await $.tool.call({ tool: tool('resolve_decision'), card: blocker, outcome: '不顯示' })
+    expect(((await first(S2)) as { children: Drawn[] }).children[0]).toEqual(word([word('●', { color: 'suggestion' }), ' ', word('窗格兩個畫面', BOLD[surface])], { wrap: 'wrap' }))
+    await ui.unmount()
+    blocker = await add($, '輸入框上方要不要顯示做完的數量？', { item: B, step: S2 })
+  }
+})
+
+test('a_step_title_with_a_detail_is_the_toggle_and_draws_its_mark_in_colour', ZH, async ($, on) => {
+  const w = await start($, on, [
+    ...board(),
+    entry('step.detail', { step: S2, detail: STEP_DETAIL }),
+    entry('step.repo', { step: S1, repo: AUTH }),
+    entry('step.detail', { step: S1, detail: '每一行一筆紀錄，帶檢查碼' }),
+  ])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await ui.press({ key: `steps:${B}` })
+    // Untagged: the mark sits in the button with the title; the label stays as 0.5.0 wrote it.
+    const untagged = await boxOfButton(ui, `detail:${S2}`)
+    expect(bare(untagged?.box.children?.[untagged.at] as Drawn)).toEqual({
+      type: 'Button',
+      props: { key: `detail:${S2}`, label: '● 窗格兩個畫面 ▸', plain: true },
+      children: [word('●', { color: 'suggestion' }), ' ', word('窗格兩個畫面', BOLD[surface]), word(' ▸', { dimColor: true })],
+    })
+    // Tagged: the mark and the repo stay outside; only the title is pressed.
+    const tagged = await boxOfButton(ui, `detail:${S1}`)
+    expect(bare(tagged?.box as Drawn)).toEqual({
+      type: 'Box',
+      props: { flexDirection: 'row', gap: 1, flexShrink: 1 },
+      children: [
+        word('✓', { color: 'success' }),
+        word('auth-center ·', { dimColor: true }),
+        { type: 'Button', props: { key: `detail:${S1}`, label: '定檔案格式 ▸', plain: true }, children: [word('定檔案格式', { dimColor: true }), word(' ▸', { dimColor: true })] },
+      ],
+    })
+    await ui.press({ key: `detail:${S1}` })
+    expect((await ui.find({ key: `detail:${S1}` }))?.text).toBe('定檔案格式 ▾')
+    expect(await detailPlace(ui, '每一行一筆紀錄，帶檢查碼')).toEqual({ start: 2, bar: DETAIL_BAR })
+    await ui.unmount()
+  }
+})
+
+test('history_rows_dim_their_time_and_folds_are_dim', ZH, async ($, on) => {
+  const entries = [...board(), entry('item.edit', { item: B, goal: '總表和卡片都看得到' }, { why: '' })]
+  const w = await start($, on, entries)
+  const doneS1 = entries[5]
+  const quiet = entries[7]
+  const fold = `fold:${B}:${entries[3].id}`
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    // The lines that open what is folded are dim.
+    for (const key of [`steps:${B}`, `log:${B}`]) expect((await ui.find({ type: 'Button', key }))?.props.dimColor).toBe(true)
+    await ui.press({ key: `log:${B}` })
+    await ui.press({ key: fold })
+    const time = stamp(doneS1.at)
+    // A row with a reason: the time dim, the change in plain words, a dim arrow at the end; the label is the line as before.
+    const row = await ui.find({ type: 'Button', key: `log:${B}:${doneS1.id}` })
+    expect(row?.props.label).toBe(`${time} 步驟 「定檔案格式」→ 做完 · Thoth pass`)
+    expect(row?.children).toEqual([word(time, { dimColor: true }), ' 步驟 「定檔案格式」→ 做完 · Thoth pass', word(' ▸', { dimColor: true })])
+    await ui.press({ key: `log:${B}:${doneS1.id}` })
+    expect((await ui.find({ type: 'Button', key: `log:${B}:${doneS1.id}` }))?.children).toEqual([
+      word(time, { dimColor: true }),
+      ' 步驟 「定檔案格式」→ 做完 · Thoth pass',
+      word(' ▾', { dimColor: true }),
+    ])
+    // A row with nothing to open has no arrow.
+    expect((await ui.find({ type: 'Button', key: `log:${B}:${quiet.id}` }))?.children).toEqual([
+      word(stamp(quiet.at), { dimColor: true }),
+      ' 項目 修改「決定看板 v1」：做完的樣子改成「總表和卡片都看得到」',
+    ])
+    // A fold of step changes: the time dim, then its arrow and what it holds.
+    expect((await ui.find({ type: 'Button', key: fold }))?.children).toEqual([word(stamp(entries[3].at), { dimColor: true }), ' ▾ 步驟：新增 2 個、做完 1 個、開始 1 個'])
+    await ui.unmount()
+  }
+})
+
+/** Five cards in the order they are shown: an action card (first, open by itself), a blocking question, a proposal, two loose questions. */
+const QB = 'e6e6e6e6'
+const Q3 = 'e7e7e7e7'
+const AC = '5a5a5a5a'
+const fiveCards = () => [
+  ...board(),
+  entry('card.open', { card: { id: AC, type: 'action', item: B, question: ACTION, why: '新的檢查要人核准', options: [], command: 'thoth checks approve' } }),
+  question(QB, { item: B, step: S2, blocking: true, question: '先做哪一個畫面？' }),
+  entry('card.open', {
+    card: { id: P1, type: 'proposal', item: B, question: '要加手機版嗎？', why: '有人在手機上看', options: [], changes: [{ kind: 'item.add', data: { item: item('11111111', '手機版', '手機上也能看') } }] },
+  }),
+  loose(),
+  question(Q3, { question: '通知要不要附聲音？', options: [{ label: '要', effect: '聽得到' }, { label: '不要', effect: '安靜' }] }),
+]
+
+test('cards_draw_a_line_in_the_colour_of_their_state_and_a_header_naming_their_kind', ZH, async ($, on) => {
+  const w = await start($, on, fiveCards())
+  /** The card's Box: the 1-cell line, then the body. */
+  const frame = async (ui: Ui, id: string) => {
+    const box = (await boxKeyed(ui, `card:box:${id}`)) as Drawn
+    const [line, body] = (box.children ?? []) as Drawn[]
+    return { box: box.props, line: bare(line), body: body.props }
+  }
+  const framed = (id: string, tone: string) => ({
+    box: { key: `card:box:${id}`, flexDirection: 'row', alignItems: 'stretch', marginBottom: 1 },
+    line: { type: 'Box', props: { key: `card:line:${id}`, width: 1, flexShrink: 0, backgroundColor: tone } },
+    body: { key: `card:body:${id}`, flexDirection: 'column', flexGrow: 1, flexShrink: 1, paddingLeft: 1 },
+  })
+  /** The header row: the kind on the left, the ✕ on the right. */
+  const header = async (ui: Ui, id: string) => {
+    const place = await boxOfButton(ui, `${id}:x`)
+    return { key: place?.box.props?.key, kind: bare(((place?.box.children ?? [])[0] as Drawn).children?.[0] as Drawn), x: place?.at, first: (await cardRows(ui, id))[0] }
+  }
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    // The first card: an amber line and an amber pill naming what it asks.
+    expect(await frame(ui, AC)).toEqual(framed(AC, 'warning'))
+    expect(await header(ui, AC)).toEqual({ key: `card:head:${AC}`, kind: word(' ⚑ 要你動手 ', { inverse: true, color: 'warning' }), x: 1, first: ' ⚑ 要你動手 ' })
+    // A folded card: a grey line, its question after ▸ (the label stays the question), then where it sits.
+    expect(await frame(ui, Q2)).toEqual(framed(Q2, 'inactive'))
+    expect(bare((await ui.find({ type: 'Button', key: `card:${Q2}` })) as unknown as Drawn)).toEqual({
+      type: 'Button',
+      props: { key: `card:${Q2}`, label: '要不要加英文文件？', plain: true },
+      children: ['▸ 要不要加英文文件？'],
+    })
+    expect(await cardRows(ui, Q2)).toEqual(['要不要加英文文件？', '其他'])
+
+    // Open, the other cards name their kind in their line's colour, without a fill.
+    for (const id of [QB, P1, Q2, Q3]) await ui.press({ key: `card:${id}` })
+    expect(await header(ui, QB)).toEqual({ key: `card:head:${QB}`, kind: word('⚑ 要你現在決定', { color: 'inactive' }), x: 1, first: '⚑ 要你現在決定' })
+    expect(await header(ui, Q2)).toEqual({ key: `card:head:${Q2}`, kind: word('⚑ 要你決定', { color: 'inactive' }), x: 1, first: '⚑ 要你決定' })
+    expect((await header(ui, P1)).kind).toEqual(word('提案', { color: 'inactive' }))
+    // Under the header: where the card sits, then its question.
+    expect((await cardRows(ui, Q2)).slice(0, 4)).toEqual(['⚑ 要你決定', '✕', '其他', '要不要加英文文件？'])
+    expect((await cardRows(ui, AC)).slice(0, 4)).toEqual([' ⚑ 要你動手 ', '✕', '決定看板 v1', ACTION])
+
+    // Staged: a green line and header. Sent: a faint line, every word dim, no header.
+    await ui.press({ key: `${Q3}:0` })
+    await ui.press({ key: 'send' })
+    await until(ui, () => w.submitted.length > 0)
+    await ui.press({ key: `${P1}:approve` })
+    expect(await frame(ui, P1)).toEqual(framed(P1, 'success'))
+    expect((await header(ui, P1)).kind).toEqual(word('提案', { color: 'success' }))
+    expect(await frame(ui, Q3)).toEqual(framed(Q3, 'subtle'))
+    expect(await cardRows(ui, Q3)).toEqual(['通知要不要附聲音？', '其他', '已送出，等 AI 結案'])
+    const sent = rowNodes((await boxKeyed(ui, `card:body:${Q3}`)) as Drawn)
+    expect(sent.map(node => node.props?.dimColor)).toEqual([true, true, true])
+    expect(await boxKeyed(ui, `card:head:${Q3}`)).toBeUndefined()
+    await ui.unmount()
+    w.submitted.length = 0
+  }
+})
+
+test('a_blocking_first_card_says_decide_now_in_its_pill', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), question(QB, { item: B, step: S2, blocking: true, question: '先做哪一個畫面？' }), loose()])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    expect((await cardRows(ui, QB))[0]).toBe(' ⚑ 要你現在決定 ')
+    expect(bare(await ui.find({ type: 'Text', text: ' ⚑ 要你現在決定 ' }))).toEqual(word(' ⚑ 要你現在決定 ', { inverse: true, color: 'warning' }))
+    await ui.press({ key: `card:${Q2}` })
+    expect(bare(await ui.find({ type: 'Text', text: '⚑ 要你決定' }))).toEqual(word('⚑ 要你決定', { color: 'inactive' }))
+    await ui.unmount()
+  }
+})
+
+test('options_draw_a_recommended_pill_a_picked_mark_and_effects_under_the_name', ZH, async ($, on) => {
+  const w = await start($, on, [...board(), blockedOnS2(), loose()])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    const option = async (key: string) => bare((await ui.find({ type: 'Button', key })) as unknown as Drawn)
+    // The first card: the engine draws "1:" before the name; the recommended one ends with a blue pill; the label stays as it was.
+    expect(await option(`${Q1}:0`)).toEqual({
+      type: 'Button',
+      props: { key: `${Q1}:0`, label: '不顯示（建議）', plain: true, hotkey: '1' },
+      children: [word('不顯示'), ' ', word(' 建議 ', { inverse: true, color: 'suggestion' })],
+    })
+    expect(await option(`${Q1}:1`)).toEqual({ type: 'Button', props: { key: `${Q1}:1`, label: '顯示', plain: true, hotkey: '2' }, children: [word('顯示')] })
+    // The effect starts under the name's first character: three cells after "1: ".
+    expect((await parentOf(ui, '一列保持短 · 做完的在總表看'))?.box.props).toEqual({ paddingLeft: 3 })
+    expect((await ui.find({ type: 'Text', text: '一列保持短 · 做完的在總表看' }))?.props).toEqual({ dimColor: true, wrap: 'wrap' })
+    // Picked: "● " and green, and the staged line in green.
+    await ui.press({ key: `${Q1}:0` })
+    expect(await option(`${Q1}:0`)).toEqual({
+      type: 'Button',
+      props: { key: `${Q1}:0`, label: '● 不顯示（建議）', plain: true, hotkey: '1' },
+      children: [word('● 不顯示', { color: 'success' }), ' ', word(' 建議 ', { inverse: true, color: 'suggestion' })],
+    })
+    expect(bare(await ui.find({ type: 'Text', text: '已選：不顯示（待送出）' }))).toEqual(word('已選：不顯示（待送出）', { color: 'success', wrap: 'wrap' }))
+    // Another card: "› " before the name, the effect two cells in.
+    await ui.press({ key: `card:${Q2}` })
+    expect(await option(`${Q2}:0`)).toEqual({ type: 'Button', props: { key: `${Q2}:0`, label: '› 加', plain: true }, children: [word('› 加')] })
+    expect((await parentOf(ui, '多一份文件'))?.box.props).toEqual({ paddingLeft: 2 })
+    await ui.unmount()
+  }
+})
+
+test('status_reads_without_colour', ZH, async ($, on) => {
+  const w = await start($, on, [...everything(), ...detailed()])
+  const marks = ['✓', '●', '○', '⚑']
+  const stateWords = ['進行中', '做完', '下一個', '之後']
+  const kinds = ['⚑ 要你決定', '⚑ 要你現在決定', '⚑ 要你動手', '提案']
+  for (const surface of SURFACES) {
+    const ui = await everythingOpen($, w, surface)
+    const tree = nodes((await ui.drawn()) as Drawn)
+    // Every step's first line starts with its mark, every item's right side with its state, in words.
+    const steps = tree.filter(node => /^step:/.test(String(node.props?.key)))
+    expect(steps.length).toBeGreaterThan(0)
+    for (const step of steps) expect(marks).toContain(shown(((step.children ?? [])[0] as Drawn)).slice(0, 1))
+    const items = tree.filter(node => /^state:/.test(String(node.props?.key)))
+    expect(items).toHaveLength(4)
+    for (const right of items) expect(stateWords).toContain(shown(((right.children ?? [])[0] as Drawn)).trim())
+
+    await ui.press({ key: 'view:cards' })
+    for (const id of [Q1, Q2, P1, D_QUESTION, D_ACTION, D_PROPOSAL]) await ui.press({ key: `card:${id}` })
+    await ui.press({ key: `${Q2}:0` })
+    await ui.press({ key: 'send' })
+    await until(ui, () => w.submitted.length > 0)
+    await ui.press({ key: `${P1}:approve` })
+    // Every open card names its kind; the staged one says it is picked, the sent one that it is sent.
+    for (const id of ['5a5a5a5a', Q1, P1, D_QUESTION, D_ACTION, D_PROPOSAL]) expect(kinds).toContain((await cardRows(ui, id))[0].trim())
+    expect((await cardRows(ui, P1)).filter(row => row.startsWith('已選：'))).toEqual(['已選：同意（待送出）'])
+    expect((await cardRows(ui, Q2)).filter(row => row.startsWith('已送出'))).toEqual(['已送出，等 AI 結案'])
+    await ui.unmount()
+    w.submitted.length = 0
   }
 })
