@@ -505,7 +505,7 @@ git commit -m "feat(plan-board): tell the AI what goes in a detail and flag step
 
 ### Task 7: 總表的步驟細節（`detailToggle`、`detailBlock`）
 
-**路線：**（Task 1 Step 4 填：A 或 B、日期、每個畫面看到的樣子）
+**路線：A**（2026-11-16）。terminal 兩種版面 Johnny 看過：長 label 接到下一列，中文和英文的結尾都看得到。Claude desktop 還沒看，Johnny 決定之後再看；到時若被截，只改 `detailToggle` 換成路線 B。
 
 **Files:**
 - Modify: `plugins/plan-board/hooks/pane.tsx:125-128`（`foldButton` 旁邊加兩個元件）、`:142-164`（`stepRow`）
