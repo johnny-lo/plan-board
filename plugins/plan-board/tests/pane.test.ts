@@ -1970,3 +1970,339 @@ test('opening_details_never_touches_the_local_log', ZH, async ($, on) => {
     await ui.unmount()
   }
 })
+
+/** The words a card shows top to bottom, as `order` reads them, inside the Box the card draws in. */
+async function cardRows(ui: Ui, card: string): Promise<string[]> {
+  const box = nodes((await ui.drawn()) as Drawn).find(node => node.props?.key === `card:box:${card}`)
+  expect(box).toBeDefined()
+  return nodes(box as Drawn)
+    .filter(node => node.type === 'Button' || node.type === 'Text' || node.type === 'Input')
+    .map(node => (node.type === 'Input' ? `input:${String(node.props?.key)}` : shown(node)))
+}
+
+/** The Box a Button keyed `key` sits directly in, and the Button's place in it. */
+async function boxOfButton(ui: Ui, key: string): Promise<{ box: Drawn; at: number } | undefined> {
+  for (const node of nodes((await ui.drawn()) as Drawn)) {
+    const at = (node.children ?? []).findIndex(child => typeof child !== 'string' && child.type === 'Button' && child.props?.key === key)
+    if (at !== -1) return { box: node, at }
+  }
+  return undefined
+}
+
+test('option_details_open_together_under_each_option', ZH, async ($, on) => {
+  const w = await start($, on, [...board()])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const added = await $.tool.call({
+      tool: tool('add_decision'),
+      item: B,
+      question: '輸入框上方要不要顯示做完的數量？',
+      why: '一列只放得下兩三件事',
+      options: [
+        { label: '不顯示', effect: '一列保持短', detail: '那列一眼看完，\n但要開窗格才知道做完幾項' },
+        { label: '顯示', effect: '一眼看到進度', detail: '那列多幾個字，窄的終端機會被截' },
+      ],
+    })
+    expect(added.deny).toBeUndefined()
+    const card = /card (\w{8})/.exec(String(added.result))?.[1] as string
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    const toggle = await ui.find({ key: `detail:${card}` })
+    expect(toggle?.type).toBe('Button')
+    expect(toggle?.text).toBe('▸ 選項細節')
+    expect(toggle?.props.hotkey).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '那列一眼看完，' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '那列多幾個字，窄的終端機會被截' })).toBeUndefined()
+    // The toggle is the first thing in the options' Box, which keeps its own margin; the toggle adds none.
+    const place = await boxOfButton(ui, `detail:${card}`)
+    expect(place?.at).toBe(0)
+    expect(place?.box.props?.marginTop).toBe(1)
+    expect((place?.box.children?.[0] as Drawn).props?.marginTop).toBeUndefined()
+
+    await ui.press({ key: `detail:${card}` })
+    expect((await ui.find({ key: `detail:${card}` }))?.text).toBe('▾ 選項細節')
+    expect(localOf(w).expanded).toContain(`detail:${card}`)
+    const rows = await order(ui)
+    expect(rows.indexOf('那列一眼看完，')).toBe(rows.indexOf('一列保持短') + 1)
+    expect(rows.indexOf('但要開窗格才知道做完幾項')).toBe(rows.indexOf('那列一眼看完，') + 1)
+    expect(rows.indexOf('那列多幾個字，窄的終端機會被截')).toBe(rows.indexOf('一眼看到進度') + 1)
+    expect(rows.indexOf('一眼看到進度')).toBe(rows.indexOf('但要開窗格才知道做完幾項') + 2)
+    expect((await parentOf(ui, '那列一眼看完，'))?.box.props?.paddingLeft).toBe(4)
+    expect((await parentOf(ui, '那列多幾個字，窄的終端機會被截'))?.box.props?.paddingLeft).toBe(4)
+
+    // Once the pick is sent the card dims: no toggle and no detail, though the toggle was left open.
+    await ui.press({ key: `${card}:0` })
+    await ui.press({ key: 'send' })
+    await until(ui, () => w.submitted.length > 0)
+    expect(await ui.find({ text: '已送出，等 AI 結案' })).toBeDefined()
+    expect(await ui.find({ key: `detail:${card}` })).toBeUndefined()
+    expect((await texts(ui)).some(text => text.includes('選項細節'))).toBe(false)
+    expect(await ui.find({ type: 'Text', text: '那列一眼看完，' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '那列多幾個字，窄的終端機會被截' })).toBeUndefined()
+    await ui.unmount()
+    expect((await $.tool.call({ tool: tool('resolve_decision'), card, outcome: '不顯示' })).deny).toBeUndefined()
+  }
+})
+
+test('an_action_card_detail_opens_between_why_and_command', ZH, async ($, on) => {
+  const w = await start($, on, [...board()])
+  const card = await addAction($, { item: B, step: S2, detail: '沒人核准就不會跑；\n核准後下一輪自動跑' })
+  expect(card).toMatch(ID)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    const closed = await order(ui)
+    const at = (rows: string[], text: string) => rows.indexOf(text)
+    expect(at(closed, '▸ 細節')).toBe(at(closed, '新的檢查要人核准才會跑') + 1)
+    expect(at(closed, '指令：thoth checks approve')).toBe(at(closed, '▸ 細節') + 1)
+    expect((await ui.find({ key: `detail:${card}` }))?.text).toBe('▸ 細節')
+    expect(await ui.find({ type: 'Text', text: '沒人核准就不會跑；' })).toBeUndefined()
+
+    await ui.press({ key: `detail:${card}` })
+    const opened = await order(ui)
+    const toggle = at(opened, '▾ 細節')
+    expect(toggle).toBe(at(opened, '新的檢查要人核准才會跑') + 1)
+    expect(opened.slice(toggle + 1, toggle + 4)).toEqual(['沒人核准就不會跑；', '核准後下一輪自動跑', '指令：thoth checks approve'])
+    expect((await parentOf(ui, '沒人核准就不會跑；'))?.box.props?.paddingLeft).toBe(2)
+
+    await ui.press({ key: `detail:${card}` })
+    expect(await ui.find({ type: 'Text', text: '沒人核准就不會跑；' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('a_proposal_detail_opens_under_approve', ZH, async ($, on) => {
+  const w = await start($, on, [...board()])
+  const proposed = await $.tool.call({
+    tool: tool('propose_change'),
+    item: B,
+    question: '要加一個文件項目嗎？',
+    why: '使用說明沒地方放',
+    changes: [{ kind: 'item.add', data: { item: { title: '文件', goal: '使用說明都在一處' } } }],
+    detail: '同意之後多一個項目「文件」',
+  })
+  expect(proposed.deny).toBeUndefined()
+  const card = /card (\w{8})/.exec(String(proposed.result))?.[1] as string
+  const bare = await $.tool.call({
+    tool: tool('propose_change'),
+    item: B,
+    question: '要加一個範例項目嗎？',
+    why: '新手需要範例',
+    changes: [{ kind: 'item.add', data: { item: { title: '範例', goal: '有三個範例' } } }],
+  })
+  const other = /card (\w{8})/.exec(String(bare.result))?.[1] as string
+  expect(other).toMatch(ID)
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    const rows = await order(ui)
+    const toggle = rows.indexOf('▸ 細節')
+    expect(toggle).toBe(rows.indexOf('項目 新增「文件」') + 1)
+    expect(rows.indexOf('不要')).toBe(toggle + 1)
+    expect(rows.indexOf('同意')).toBeLessThan(toggle)
+    // The toggle sits in from the approve line as the changes do.
+    expect((await boxOfButton(ui, `detail:${card}`))?.box.props?.paddingLeft).toBe(2)
+    expect(await ui.find({ type: 'Text', text: '同意之後多一個項目「文件」' })).toBeUndefined()
+
+    await ui.press({ key: `detail:${card}` })
+    const opened = await order(ui)
+    const at = opened.indexOf('▾ 細節')
+    expect(opened.slice(at + 1, at + 3)).toEqual(['同意之後多一個項目「文件」', '不要'])
+    expect((await parentOf(ui, '同意之後多一個項目「文件」'))?.box.props?.paddingLeft).toBe(4)
+
+    // A proposal without a detail has no toggle, folded or open.
+    expect(await ui.find({ key: `detail:${other}` })).toBeUndefined()
+    await ui.press({ key: `card:${other}` })
+    expect(await ui.find({ key: `${other}:reject` })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: `detail:${other}` })).toBeUndefined()
+    expect(await detailButtons(ui)).toEqual([`detail:${card}`])
+    await ui.unmount()
+  }
+})
+
+test('a_change_with_a_detail_shows_it_under_the_reason', ZH, async ($, on) => {
+  const w = await start($, on, [...board()])
+  const proposed = await $.tool.call({
+    tool: tool('propose_change'),
+    item: B,
+    question: '要改做完的樣子嗎？',
+    why: '目標寫得太模糊',
+    changes: [{ kind: 'item.edit', data: { item: B, goal: '打開窗格三秒內看到進度' } }],
+    detail: '同意之後做完的樣子改成量得出來的說法',
+  })
+  const card = /card (\w{8})/.exec(String(proposed.result))?.[1] as string
+  expect((await $.tool.call({ tool: tool('apply_change'), card, chat: '好' })).deny).toBeUndefined()
+  const stepped = await $.tool.call({
+    tool: tool('update_step'),
+    why: '換做法',
+    why_detail: '舊做法太慢',
+    ops: [
+      { action: 'add', item: B, title: '英文說明', detail: '寫給第一次用的人看' },
+      { action: 'add', item: B, title: '補測試', detail: '每個畫面都有一個測試' },
+    ],
+  })
+  expect(stepped.deny).toBeUndefined()
+  const decided = await add($, '要不要先做英文說明？', { item: B })
+  expect((await $.tool.call({ tool: tool('resolve_decision'), card: decided, outcome: '先不做', detail: '等第一版穩定之後再寫' })).deny).toBeUndefined()
+  const waiting = await add($, '範例放哪裡？', { item: B })
+  expect(waiting).toMatch(ID)
+
+  /** Presses the history line that `line` matches and reads the row after its reason; presses it again to close it. */
+  const under = async (ui: Ui, line: RegExp, reason: string): Promise<string | undefined> => {
+    const found = await ui.find({ type: 'Button', text: line })
+    expect(found).toBeDefined()
+    await ui.press({ key: found?.key as string })
+    const rows = await order(ui)
+    const at = rows.findIndex(row => line.test(row))
+    expect(rows[at + 1]).toBe(reason)
+    await ui.press({ key: found?.key as string })
+    return rows[at + 2]
+  }
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: `item:${B}` })
+    await openFolds(ui)
+    expect(await under(ui, /項目 修改「決定看板 v1」：做完的樣子改成「打開窗格三秒內看到進度」/, '原因：目標寫得太模糊')).toBe('同意之後做完的樣子改成量得出來的說法')
+    expect(await under(ui, /卡片 結案「要改做完的樣子嗎？」/, '原因：目標寫得太模糊')).toBe('同意之後做完的樣子改成量得出來的說法')
+    // The two adds fold into one line; opened, each entry shows the call's why_detail under its reason.
+    expect(await under(ui, /步驟 新增「英文說明」/, '原因：換做法')).toBe('舊做法太慢')
+    expect(await under(ui, /步驟 新增「補測試」/, '原因：換做法')).toBe('舊做法太慢')
+    expect(await under(ui, /卡片 結案「要不要先做英文說明？」/, '原因：先不做')).toBe('等第一版穩定之後再寫')
+    // An entry without a detail draws as before: the next history line follows its reason.
+    expect(await under(ui, /「定檔案格式」→ 做完 · Thoth pass/, '原因：面板測試全過')).toMatch(/^\d\d\/\d\d \d\d:\d\d /)
+
+    // The detail sits four cells in from the history line, two from its reason.
+    const line = await ui.find({ type: 'Button', text: /卡片 結案「要不要先做英文說明？」/ })
+    await ui.press({ key: line?.key as string })
+    expect((await parentOf(ui, '等第一版穩定之後再寫'))?.box.props?.paddingLeft).toBe(4)
+    expect((await ui.find({ type: 'Text', text: '等第一版穩定之後再寫' }))?.props.dimColor).toBe(true)
+    await ui.press({ key: line?.key as string })
+
+    // A card's earlier changes: a single entry opens to its detail; the folded adds stay one plain line.
+    await ui.press({ key: 'view:cards' })
+    await ui.press({ key: `recent:${waiting}` })
+    const fold = await ui.find({ type: 'Text', text: /^\d\d\/\d\d \d\d:\d\d 步驟：新增 2 個$/ })
+    expect(fold).toBeDefined()
+    expect(await ui.findAll({ type: 'Button', text: fold?.text })).toEqual([])
+    expect(await under(ui, /卡片 結案「要不要先做英文說明？」/, '原因：先不做')).toBe('等第一版穩定之後再寫')
+    expect(await ui.find({ type: 'Text', text: '舊做法太慢' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('closed_details_add_at_most_one_row_per_card', ZH, async ($, on) => {
+  const QD = 'a0a0a0a0'
+  const QN = 'a5a5a5a5'
+  const AD = 'b0b0b0b0'
+  const AN = 'b5b5b5b5'
+  const PD = 'c0c0c0c0'
+  const PN = 'c5c5c5c5'
+  const action = (id: string, extra: Record<string, unknown> = {}) =>
+    entry('card.open', { card: { id, type: 'action', item: B, question: ACTION, why: '新的檢查要人核准', options: [], command: 'thoth checks approve', ...extra } })
+  const proposal = (id: string, extra: Record<string, unknown> = {}) =>
+    entry('card.open', {
+      card: { id, type: 'proposal', item: B, question: '要加手機版嗎？', why: '有人在手機上看', options: [], changes: [{ kind: 'item.add', data: { item: item('11111111', '手機版', '手機上也能看') } }], ...extra },
+    })
+  const w = await start($, on, [
+    ...board(),
+    question(QD, {
+      item: B,
+      options: [
+        { label: '不顯示', effect: '一列保持短', detail: '那列一眼看完' },
+        { label: '顯示', effect: '一眼看到進度' },
+      ],
+    }),
+    question(QN, { item: B }),
+    action(AD, { detail: '沒人核准就不會跑' }),
+    action(AN),
+    proposal(PD, { detail: '同意之後多一個項目' }),
+    proposal(PN),
+  ])
+  const pairs = [
+    [QD, QN],
+    [AD, AN],
+    [PD, PN],
+  ]
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    // Only the card that opens by itself (an action card comes first) has a toggle: a folded card draws none.
+    expect(await detailButtons(ui)).toEqual([`detail:${AD}`])
+    for (const id of [QD, QN, AN, PD, PN]) await ui.press({ key: `card:${id}` })
+    expect((await detailButtons(ui)).sort()).toEqual([`detail:${QD}`, `detail:${AD}`, `detail:${PD}`].sort())
+    for (const [withDetail, without] of pairs) {
+      const more = await cardRows(ui, withDetail)
+      const less = await cardRows(ui, without)
+      expect(more.length - less.length).toBe(1)
+      expect(more.filter(row => row === '▸ 選項細節' || row === '▸ 細節')).toHaveLength(1)
+    }
+    expect((await texts(ui)).some(text => text.includes('那列一眼看完') || text.includes('沒人核准就不會跑') || text.includes('同意之後多一個項目'))).toBe(false)
+    await ui.unmount()
+
+    // The row above the prompt draws no toggle and no detail.
+    const line = await band($, surface)
+    expect((await texts(line)).some(text => text.includes('細節'))).toBe(false)
+    await line.unmount()
+  }
+})
+
+test('each_card_opens_only_its_own_details', ZH, async ($, on) => {
+  const w = await start($, on, [
+    ...board(),
+    entry('step.detail', { step: S2, detail: '上方兩個按鈕切換總表和等你' }),
+    question(Q0, {
+      item: B,
+      question: '總表要不要分頁？',
+      options: [
+        { label: '分頁', effect: '一頁一個項目', detail: '項目多的時候比較好找' },
+        { label: '不分頁', effect: '全部一頁', detail: '捲動就看得到全部' },
+      ],
+    }),
+    question(Q1, {
+      item: B,
+      step: S2,
+      options: [
+        { label: '不顯示', effect: '一列保持短', detail: '那列一眼看完' },
+        { label: '顯示', effect: '一眼看到進度', detail: '窄的終端機會被截' },
+      ],
+    }),
+  ])
+  for (const surface of SURFACES) {
+    await fresh($, w)
+    const ui = await pane($, surface)
+    await ui.press({ key: 'view:cards' })
+    await ui.press({ key: `card:${Q1}` })
+    expect((await ui.find({ key: `detail:${Q1}` }))?.text).toBe('▸ 選項細節')
+
+    await ui.press({ key: `detail:${Q0}` })
+    expect((await ui.find({ key: `detail:${Q0}` }))?.text).toBe('▾ 選項細節')
+    expect(await ui.find({ type: 'Text', text: '項目多的時候比較好找' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '捲動就看得到全部' })).toBeDefined()
+    expect((await ui.find({ key: `detail:${Q1}` }))?.text).toBe('▸ 選項細節')
+    expect(await ui.find({ type: 'Text', text: '那列一眼看完' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '窄的終端機會被截' })).toBeUndefined()
+    expect(localOf(w).expanded).toContain(`detail:${Q0}`)
+    expect(localOf(w).expanded).not.toContain(`detail:${Q1}`)
+    expect(localOf(w).expanded).not.toContain(`detail:${S2}`)
+
+    // The second card opens on its own press and leaves the first as it is.
+    await ui.press({ key: `detail:${Q1}` })
+    expect(await ui.find({ type: 'Text', text: '那列一眼看完' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '項目多的時候比較好找' })).toBeDefined()
+    await ui.press({ key: `detail:${Q0}` })
+    expect(await ui.find({ type: 'Text', text: '項目多的時候比較好找' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '那列一眼看完' })).toBeDefined()
+    expect(localOf(w).expanded).not.toContain(`detail:${S2}`)
+
+    // The step the second card points to stays closed in the overview.
+    await ui.press({ key: 'view:overview' })
+    await ui.press({ key: `item:${B}` })
+    expect((await ui.find({ key: `detail:${S2}` }))?.text).toMatch(/▸$/)
+    expect(await ui.find({ type: 'Text', text: '上方兩個按鈕切換總表和等你' })).toBeUndefined()
+    await ui.unmount()
+  }
+})

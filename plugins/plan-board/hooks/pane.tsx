@@ -90,20 +90,23 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
   const firstId = open.find(card => !isSent(card))?.id
   const localLine = current.storage === 'local' ? <Text dimColor wrap="wrap">{t(lang, 'localMode')}</Text> : null
 
-  /** One entry of an item's history: a line to press for its reason. */
+  /** One entry of an item's history: a line to press for its reason, and its detail under the reason. */
   const logRow = (itemId: string, entry: Entry, isNested: boolean) => {
     const [line, reason] = historyLines(entry, current, lang)
     const whyKey = `why:${entry.id}`
+    const isOpen = mine.expanded.includes(whyKey)
+    const detail = entry.detail ?? ''
     return (
       <Box key={`box:log:${itemId}:${entry.id}`} flexDirection="column" paddingLeft={isNested ? 2 : 0}>
         <Button key={`log:${itemId}:${entry.id}`} plain label={line} onPress={() => actions.toggle(whyKey)} />
-        {reason !== undefined && mine.expanded.includes(whyKey) && (
+        {reason !== undefined && isOpen && (
           <Box paddingLeft={2}>
             <Text dimColor wrap="wrap">
               {reason}
             </Text>
           </Box>
         )}
+        {isOpen && detail !== '' && detailBlock(whyKey, detail, 4)}
       </Box>
     )
   }
@@ -326,6 +329,10 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
         </Box>
       </Box>
     )
+    // A card's details open under one toggle, kept as detail:<card id>; sent and folded cards returned above, so they draw none.
+    const detailKey = `detail:${card.id}`
+    const isDetailOpen = mine.expanded.includes(detailKey)
+    const cardDetail = card.detail ?? ''
     const typed = Object.hasOwn(typing, card.id) ? typing[card.id] : ''
     const noteBox = Input && (
       <Box flexDirection="column" marginTop={1}>
@@ -352,6 +359,8 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
             {where}
           </Text>
           {whyBox('actionWhy')}
+          {cardDetail !== '' && detailToggle(detailKey, t(lang, 'details'), 'before')}
+          {cardDetail !== '' && isDetailOpen && detailBlock(detailKey, cardDetail, 2)}
           {card.command !== undefined && <Text wrap="wrap">{t(lang, 'command', { command: card.command })}</Text>}
           <Box marginTop={1}>
             <Button key={`${card.id}:done`} plain {...hotkey(0)} label={t(lang, 'actionDone')} onPress={() => actions.choose(card, 'done')} />
@@ -364,6 +373,8 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
     const recent = recentFor(current, card, RECENT)
     const recentKey = `recent:${card.id}`
     const hasStaged = staged !== undefined
+    // One toggle opens every option's detail at once, so they can be compared side by side.
+    const hasOptionDetails = card.type !== 'proposal' && card.options.some(option => (option.detail ?? '') !== '')
     return (
       <Box key={`card:box:${card.id}`} flexDirection="column" {...border(hasStaged ? 'green' : isFirst ? 'yellow' : 'gray')}>
         {head}
@@ -372,6 +383,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
         </Text>
         {whyBox('why')}
         <Box flexDirection="column" marginTop={1}>
+          {hasOptionDetails && detailToggle(detailKey, t(lang, 'optionDetails'), 'before')}
           {card.type === 'proposal' ? (
             <Box flexDirection="column">
               <Button
@@ -388,6 +400,8 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
                   </Text>
                 </Box>
               ))}
+              {cardDetail !== '' && <Box paddingLeft={2}>{detailToggle(detailKey, t(lang, 'details'), 'before')}</Box>}
+              {cardDetail !== '' && isDetailOpen && detailBlock(detailKey, cardDetail, 4)}
               <Button
                 key={`${card.id}:reject`}
                 plain
@@ -401,6 +415,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
               const mark = staged?.choice === option.label ? '● ' : ''
               const label = `${mark || (isFirst && i < 9 ? '' : '› ')}${option.label}${option.recommended === true ? t(lang, 'recommended') : ''}`
               const effect = option.reason !== undefined && option.reason !== '' ? `${option.effect} · ${option.reason}` : option.effect
+              const optionDetail = option.detail ?? ''
               return (
                 <Box key={`option:${card.id}:${i}`} flexDirection="column">
                   <Button key={`${card.id}:${i}`} plain {...hotkey(i)} label={label} onPress={() => actions.choose(card, option.label)} />
@@ -409,6 +424,7 @@ export function paneView(elements: Elements, current: Plan, mine: Local, typing:
                       {effect}
                     </Text>
                   </Box>
+                  {isDetailOpen && optionDetail !== '' && detailBlock(`${detailKey}:${i}`, optionDetail, 4)}
                 </Box>
               )
             })
